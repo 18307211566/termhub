@@ -1,0 +1,31 @@
+# Rust / Cargo
+target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+.tauri/
+
+# Frontend
+node_modules/
+dist/
+.vite/
+.cache/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# termhub local config (do NOT commit user secrets)
+config.local.toml
+host_key
+logs/
