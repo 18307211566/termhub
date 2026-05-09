@@ -8,4 +8,4 @@ pub use config::{Config, PtySize, ServerConfig, SessionConfig, UiConfig, Upstrea
 pub use driver::{DriverError, DriverEvent, UpstreamDriver};
 pub use hub::{Hub, HubHandle, SubscriberId};
 pub use session::{SessionStatus, StatusTx, StatusRx};
-pub use session_mgr::SessionMgr;
+pub use session_mgr::{SessionEntry, SessionMgr};
