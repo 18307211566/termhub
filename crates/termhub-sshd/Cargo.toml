@@ -1,0 +1,17 @@
+[package]
+name = "termhub-sshd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+termhub-core = { workspace = true }
+tokio        = { workspace = true }
+bytes        = { workspace = true }
+anyhow       = { workspace = true }
+thiserror    = { workspace = true }
+tracing      = { workspace = true }
+async-trait  = { workspace = true }
+
+russh        = "0.45"
+russh-keys   = "0.45"

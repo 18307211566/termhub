@@ -1,0 +1,42 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/termhub-core",
+    "crates/termhub-drivers",
+    "crates/termhub-sshd",
+    "crates/termhub-app",
+]
+
+[workspace.package]
+version     = "0.1.0"
+edition     = "2021"
+license     = "MIT OR Apache-2.0"
+repository  = "https://example.local/termhub"
+rust-version = "1.79"
+
+[workspace.dependencies]
+tokio          = { version = "1.40", features = ["full"] }
+tokio-util     = { version = "0.7", features = ["rt"] }
+bytes          = "1.7"
+anyhow         = "1.0"
+thiserror      = "1.0"
+tracing        = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde          = { version = "1.0", features = ["derive"] }
+toml           = "0.8"
+async-trait    = "0.1"
+
+# 子 crate 内部依赖
+termhub-core    = { path = "crates/termhub-core" }
+termhub-drivers = { path = "crates/termhub-drivers" }
+termhub-sshd    = { path = "crates/termhub-sshd" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "unwind"
+
+[profile.dev]
+opt-level = 0
+debug = true
