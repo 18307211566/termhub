@@ -1,18 +1,12 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <title>Termhub</title>
-</head>
-<body class="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center gap-4 p-8">
-  <div class="max-w-md w-full rounded-2xl border border-slate-800 bg-slate-900/80 shadow-xl p-8 space-y-4">
-    <h1 class="text-2xl font-semibold tracking-tight">Termhub</h1>
-    <p class="text-sm text-slate-400 leading-relaxed">
-      Web UI 骨架（Tailwind CDN）。后续向导与会话列表将通过 <code class="text-cyan-400">invoke</code> / <code class="text-cyan-400">listen</code> 调用后端。
-    </p>
-    <p class="text-xs text-slate-500">SSH server 监听端口请查看应用控制台日志。</p>
-  </div>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Termhub</title>
+  </head>
+  <body class="bg-slate-950 text-slate-100 antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

@@ -3,5 +3,9 @@
   "identifier": "default",
   "description": "Main window default capability",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "core:event:allow-listen",
+    "autostart:default"
+  ]
 }

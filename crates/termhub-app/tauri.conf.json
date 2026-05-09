@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "identifier": "local.termhub",
   "build": {
-    "frontendDist": "ui",
-    "devUrl": null,
-    "beforeDevCommand": "",
-    "beforeBuildCommand": ""
+    "frontendDist": "ui/dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev --prefix ui",
+    "beforeBuildCommand": "npm ci --prefix ui && npm run build --prefix ui"
   },
   "app": {
     "security": {
