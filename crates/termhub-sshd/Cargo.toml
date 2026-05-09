@@ -17,4 +17,5 @@ russh        = "0.45"
 russh-keys   = "0.45"
 
 [dev-dependencies]
-async-trait  = { workspace = true }
+async-trait = { workspace = true }
+tokio-util  = { workspace = true }
