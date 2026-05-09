@@ -23,8 +23,11 @@ struct Inner {
 impl RServer for Inner {
     type Handler = ClientHandler;
 
-    fn new_client(&mut self, _peer_addr: Option<SocketAddr>) -> Self::Handler {
-        ClientHandler::new(Arc::clone(&self.mgr), self.max_clients)
+    fn new_client(&mut self, peer_addr: Option<SocketAddr>) -> Self::Handler {
+        let peer = peer_addr
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "?".into());
+        ClientHandler::new(Arc::clone(&self.mgr), self.max_clients, peer)
     }
 }
 

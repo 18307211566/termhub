@@ -60,6 +60,8 @@ pub struct PtySize {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum UpstreamSpec {
+    /// 内置环回（测试 / 默认 demo）
+    Loopback,
     Serial {
         port: String,
         baud: u32,

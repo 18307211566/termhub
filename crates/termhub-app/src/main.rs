@@ -1,137 +1,240 @@
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
+mod commands;
+mod commands_settings;
+mod hostkey;
+mod state;
+
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use bytes::Bytes;
-use termhub_core::{DriverEvent, Hub, SessionMgr, SessionStatus, UpstreamDriver};
-use termhub_drivers::loopback::LoopbackDriver;
+use tauri::Manager;
+
+use commands::{
+    create_session, delete_session, get_server_info, kick_client, list_clients, list_sessions,
+    spawn_session_status_listener, stop_session,
+};
+use commands_settings::{get_autostart, set_autostart, set_listen_addr};
+use state::{AppState, RunnerEntry};
+use termhub_core::{
+    start_session, RunnerConfig, SessionConfig, SessionMgr, UpstreamSpec,
+};
+use termhub_drivers::factory::create_driver;
 use termhub_sshd::{start as sshd_start, ServerConfig as SshdConfig};
-use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tauri::async_runtime::set(tokio::runtime::Handle::current());
 
+    let cfg_dir = termhub_core::default_config_dir()?;
+    std::fs::create_dir_all(&cfg_dir)?;
+
+    let log_dir = cfg_dir.join("logs");
+    std::fs::create_dir_all(&log_dir)?;
+    let log_file = tracing_appender::rolling::daily(&log_dir, "termhub.log");
+    let (non_blocking, log_guard) = tracing_appender::non_blocking(log_file);
     FmtSubscriber::builder()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
+        .with_writer(non_blocking)
         .init();
-    tracing::info!("termhub starting");
+
+    std::panic::set_hook(Box::new(|info| {
+        let bt = std::backtrace::Backtrace::force_capture();
+        tracing::error!("PANIC: {info}\n{bt}");
+    }));
+
+    let stored = termhub_core::load_or_default(&cfg_dir)?;
+
+    let host_key_path = cfg_dir.join(&stored.server.host_key_path);
+    let host_key = hostkey::load_or_create(&host_key_path)?;
+    let fpr = hostkey::fingerprint(&host_key)?;
+    tracing::info!(fingerprint=%fpr, "host key ready");
 
     let mgr = Arc::new(SessionMgr::new());
 
-    let (hub, up_tx, up_rx) = Hub::new(1024, 256);
-    let (st, sr) = termhub_core::session::status_channel();
-    let cancel = CancellationToken::new();
-    mgr.register(
-        "echo".to_string(),
-        "pass".to_string(),
-        hub.handle(),
-        sr,
-        cancel.clone(),
-    )
-    .await?;
-    spawn_loopback(up_tx, up_rx, cancel.clone());
-    let _ = st.send(SessionStatus::Running { uptime_secs: 0 });
+    let mut runners_map: HashMap<String, RunnerEntry> = HashMap::new();
+
+    let mut sessions_to_start = stored.sessions.clone();
+    if !sessions_to_start
+        .iter()
+        .any(|s| s.name.eq_ignore_ascii_case("echo"))
+    {
+        sessions_to_start.insert(
+            0,
+            SessionConfig {
+                name: "echo".into(),
+                password: "pass".into(),
+                auto_reconnect: false,
+                pty_override: None,
+                upstream: UpstreamSpec::Loopback,
+            },
+        );
+    }
+
+    for s in sessions_to_start {
+        let spec = s.upstream.clone();
+        let factory: termhub_core::runner::DriverFactory =
+            Box::new(move || create_driver(&spec).expect("driver factory"));
+        let started = start_session(
+            mgr.clone(),
+            s.name.clone(),
+            s.password.clone(),
+            factory,
+            RunnerConfig {
+                auto_reconnect: s.auto_reconnect,
+                max_attempts: None,
+            },
+        )
+        .await?;
+        runners_map.insert(
+            s.name.to_ascii_lowercase(),
+            RunnerEntry {
+                started,
+                config: s,
+            },
+        );
+    }
 
     if let Ok(port) = std::env::var("TERMHUB_DEV_SERIAL") {
         let baud: u32 = std::env::var("TERMHUB_DEV_BAUD")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(115200);
-        let (hub2, up_tx2, up_rx2) = Hub::new(1024, 256);
-        let (st2, sr2) = termhub_core::session::status_channel();
-        let cancel_serial = CancellationToken::new();
-        mgr.register(
-            "com".to_string(),
-            "pass".to_string(),
-            hub2.handle(),
-            sr2,
-            cancel_serial.clone(),
+        let spec = UpstreamSpec::Serial {
+            port,
+            baud,
+            data_bits: 8,
+            parity: "none".into(),
+            stop_bits: 1,
+            flow: "none".into(),
+            input_eol: "as_is".into(),
+            output_eol: "as_is".into(),
+        };
+        let cfg = SessionConfig {
+            name: "com".into(),
+            password: "pass".into(),
+            auto_reconnect: true,
+            pty_override: None,
+            upstream: spec.clone(),
+        };
+        let spec2 = spec.clone();
+        let factory: termhub_core::runner::DriverFactory =
+            Box::new(move || create_driver(&spec2).expect("driver factory"));
+        let started = start_session(
+            mgr.clone(),
+            cfg.name.clone(),
+            cfg.password.clone(),
+            factory,
+            RunnerConfig {
+                auto_reconnect: true,
+                max_attempts: None,
+            },
         )
         .await?;
-        spawn_serial(port, baud, up_tx2, up_rx2, cancel_serial);
-        let _ = st2.send(SessionStatus::Running { uptime_secs: 0 });
+        runners_map.insert(cfg.name.to_ascii_lowercase(), RunnerEntry { started, config: cfg });
     }
 
-    let host_key = russh_keys::key::KeyPair::generate_ed25519().expect("ed25519 host key");
     let (_sshd, addr) = sshd_start(
         SshdConfig {
-            listen: "0.0.0.0:2222".to_string(),
+            listen: stored.server.listen.clone(),
             host_key,
-            max_clients_per_session: 16,
+            max_clients_per_session: stored.server.max_clients_per_session,
         },
         mgr.clone(),
     )
     .await?;
+
+    let app_state = AppState::new(
+        mgr.clone(),
+        addr,
+        fpr,
+        cfg_dir,
+        stored.server.max_clients_per_session,
+    );
+    {
+        let mut w = app_state.runners.write().await;
+        for (k, v) in runners_map {
+            w.insert(k, v);
+        }
+    }
+
+    let first_listen = app_state.server_listen_addr.read().await.to_string();
     tracing::info!(
-        "sshd listening on {addr}, try: ssh echo@127.0.0.1 -p {} (password: pass)",
+        "sshd on {first_listen}, example: ssh echo@127.0.0.1 -p {} (password: pass)",
         addr.port()
     );
+
+    let runners_for_status = app_state.runners.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .manage(app_state)
+        .invoke_handler(tauri::generate_handler![
+            list_sessions,
+            create_session,
+            stop_session,
+            delete_session,
+            list_clients,
+            kick_client,
+            get_server_info,
+            set_listen_addr,
+            get_autostart,
+            set_autostart,
+        ])
+        .setup(move |app| {
+            let app_h = app.handle().clone();
+            let runners_arc = runners_for_status.clone();
+            tauri::async_runtime::spawn(async move {
+                let snapshot = runners_arc.read().await;
+                for (_k, entry) in snapshot.iter() {
+                    spawn_session_status_listener(
+                        app_h.clone(),
+                        entry.config.name.clone(),
+                        entry.started.status_rx.clone(),
+                    );
+                }
+            });
+
+            let show_i = tauri::menu::MenuItem::with_id(app, "show", "打开主窗口", true, None::<&str>)?;
+            let quit_i = tauri::menu::MenuItem::with_id(app, "quit", "完全退出", true, None::<&str>)?;
+            let menu = tauri::menu::Menu::with_items(app, &[&show_i, &quit_i])?;
+            let icon = app.default_window_icon().cloned().ok_or_else(|| {
+                anyhow::anyhow!("missing default window icon")
+            })?;
+            let _tray = tauri::tray::TrayIconBuilder::new()
+                .icon(icon)
+                .menu(&menu)
+                .on_menu_event(move |app, e| {
+                    match e.id.as_ref() {
+                        "show" => {
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                        "quit" => app.exit(0),
+                        _ => {}
+                    }
+                })
+                .build(app)?;
+
+            Ok(())
+        })
+        .on_window_event(|win, evt| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = evt {
+                api.prevent_close();
+                let _ = win.hide();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("tauri run");
 
+    drop(log_guard);
     Ok(())
-}
-
-fn spawn_loopback(
-    up_tx: mpsc::Sender<Bytes>,
-    up_rx: mpsc::Receiver<Bytes>,
-    cancel: CancellationToken,
-) {
-    let (evt_tx, mut evt_rx) = mpsc::channel::<DriverEvent>(64);
-    tokio::spawn(async move {
-        while let Some(e) = evt_rx.recv().await {
-            if let DriverEvent::Output(b) = e {
-                let _ = up_tx.send(b).await;
-            }
-        }
-    });
-    tokio::spawn(async move {
-        let mut d = LoopbackDriver::default();
-        let _ = d.run(up_rx, evt_tx, cancel).await;
-    });
-}
-
-fn spawn_serial(
-    port: String,
-    baud: u32,
-    up_tx: mpsc::Sender<Bytes>,
-    up_rx: mpsc::Receiver<Bytes>,
-    cancel: CancellationToken,
-) {
-    use termhub_drivers::eol::EolMode;
-    use termhub_drivers::serial::{parse_serial_params, SerialDriver};
-    let params = parse_serial_params(8, "none", 1, "none").unwrap();
-    let (evt_tx, mut evt_rx) = mpsc::channel::<DriverEvent>(64);
-    let up_forward = up_tx.clone();
-    tokio::spawn(async move {
-        while let Some(e) = evt_rx.recv().await {
-            if let DriverEvent::Output(b) = e {
-                let _ = up_forward.send(b).await;
-            }
-        }
-    });
-    tokio::spawn(async move {
-        let mut d = SerialDriver {
-            port,
-            baud,
-            params,
-            input_eol: EolMode::AsIs,
-            output_eol: EolMode::AsIs,
-        };
-        if let Err(e) = d.run(up_rx, evt_tx, cancel).await {
-            tracing::error!(?e, "serial driver exited");
-        }
-    });
-    let _ = up_tx;
 }

@@ -1,11 +1,23 @@
+pub mod backoff;
+pub mod clients;
 pub mod config;
 pub mod driver;
 pub mod hub;
+pub mod persist;
+pub mod runner;
+pub mod secrets;
 pub mod session;
+pub mod session_factory;
 pub mod session_mgr;
 
+pub use backoff::Backoff;
+pub use clients::{ClientRecord, ClientRecordSnapshot, ClientRegistry};
 pub use config::{Config, PtySize, ServerConfig, SessionConfig, UiConfig, UpstreamSpec};
 pub use driver::{DriverError, DriverEvent, UpstreamDriver};
 pub use hub::{Hub, HubHandle, SubscriberId};
-pub use session::{SessionStatus, StatusTx, StatusRx};
+pub use persist::{default_config_dir, load_or_default, save};
+pub use runner::{spawn_runner, DriverFactory, RunnerConfig};
+pub use secrets::{decrypt, encrypt};
+pub use session::{SessionStatus, StatusRx, StatusTx};
+pub use session_factory::{start_session, StartedSession};
 pub use session_mgr::{SessionEntry, SessionMgr};

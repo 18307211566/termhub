@@ -15,10 +15,14 @@ tauri-build = { version = "2", features = [] }
 termhub-core = { workspace = true }
 termhub-drivers = { workspace = true }
 termhub-sshd = { workspace = true }
+serde = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tracing-appender = "0.2"
+sha2 = "0.10"
+base64 = "0.22"
 bytes = { workspace = true }
 tokio-util = { workspace = true }
 

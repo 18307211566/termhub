@@ -3,25 +3,30 @@ use std::sync::Arc;
 use bytes::Bytes;
 use russh::server::{Auth, Handle, Handler, Msg, Session};
 use russh::{ChannelId, CryptoVec};
-use termhub_core::{SessionEntry, SessionMgr};
+use termhub_core::{ClientRecord, SessionEntry, SessionMgr};
+use std::sync::atomic::Ordering;
 use tokio::task::JoinHandle;
 
 pub struct ClientHandler {
     mgr: Arc<SessionMgr>,
     max_clients: usize,
+    peer: String,
     user: Option<String>,
     entry: Option<SessionEntry>,
     forward_task: Option<JoinHandle<()>>,
+    client_rec: Option<Arc<ClientRecord>>,
 }
 
 impl ClientHandler {
-    pub fn new(mgr: Arc<SessionMgr>, max_clients: usize) -> Self {
+    pub fn new(mgr: Arc<SessionMgr>, max_clients: usize, peer: String) -> Self {
         Self {
             mgr,
             max_clients,
+            peer,
             user: None,
             entry: None,
             forward_task: None,
+            client_rec: None,
         }
     }
 }
@@ -74,32 +79,51 @@ impl Handler for ClientHandler {
         }
 
         session.channel_success(channel);
+        let remote = self.peer.clone();
+        let rec = entry.clients.attach(remote).await;
+        self.client_rec = Some(rec.clone());
+
         let mut rx = entry.hub.subscribe_output();
         let handle: Handle = session.handle();
+        let kick = rec.kick.clone();
 
         let task = tokio::spawn(async move {
             loop {
-                match rx.recv().await {
-                    Ok(bytes) => {
-                        if handle
-                            .data(channel, CryptoVec::from_slice(&bytes))
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                tokio::select! {
+                    _ = kick.cancelled() => {
                         let _ = handle
                             .data(
                                 channel,
-                                CryptoVec::from_slice(
-                                    b"\x1b[33m*** termhub: client lagged, output truncated\x1b[0m\r\n",
-                                ),
+                                CryptoVec::from_slice(b"*** termhub: kicked by host\r\n"),
                             )
                             .await;
+                        let _ = handle.close(channel).await;
+                        break;
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    msg = rx.recv() => match msg {
+                        Ok(b) => {
+                            rec.bytes_out
+                                .fetch_add(b.len() as u64, Ordering::Relaxed);
+                            if handle
+                                .data(channel, CryptoVec::from_slice(&b))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            let _ = handle
+                                .data(
+                                    channel,
+                                    CryptoVec::from_slice(
+                                        b"\x1b[33m*** termhub: client lagged, output truncated\x1b[0m\r\n",
+                                    ),
+                                )
+                                .await;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    },
                 }
             }
         });
@@ -116,6 +140,10 @@ impl Handler for ClientHandler {
     ) -> Result<(), Self::Error> {
         if let Some(entry) = self.entry.as_ref() {
             let _ = entry.hub.send_input(Bytes::copy_from_slice(data)).await;
+            if let Some(rec) = self.client_rec.as_ref() {
+                rec.bytes_in
+                    .fetch_add(data.len() as u64, Ordering::Relaxed);
+            }
         }
         Ok(())
     }
@@ -123,11 +151,15 @@ impl Handler for ClientHandler {
     async fn channel_close(
         &mut self,
         _channel: ChannelId,
-        _session: &mut Session,
+        session: &mut Session,
     ) -> Result<(), Self::Error> {
         if let Some(task) = self.forward_task.take() {
             task.abort();
         }
+        if let (Some(rec), Some(entry)) = (self.client_rec.take(), self.entry.as_ref()) {
+            entry.clients.detach(rec.id).await;
+        }
+        let _ = session;
         Ok(())
     }
 }

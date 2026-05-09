@@ -20,11 +20,12 @@ fn normalize_name(s: &str) -> Option<String> {
 
 #[derive(Clone)]
 pub struct SessionEntry {
-    pub name: String,            // 原始名（保留大小写显示）
-    pub password: String,        // 明文（运行期；落盘时由 config 层加密）
+    pub name: String,
+    pub password: String,
     pub hub: HubHandle,
     pub status: StatusRx,
     pub cancel: CancellationToken,
+    pub clients: crate::clients::ClientRegistry,
 }
 
 #[derive(Default)]
@@ -58,6 +59,7 @@ impl SessionMgr {
                 hub,
                 status,
                 cancel,
+                clients: crate::clients::ClientRegistry::default(),
             },
         );
         Ok(())
