@@ -13,3 +13,9 @@ thiserror    = { workspace = true }
 tracing      = { workspace = true }
 async-trait  = { workspace = true }
 tokio-util   = { workspace = true }
+tokio-serial = "5.4"
+serialport   = "4.3"
+
+[dev-dependencies]
+tokio-serial = "5.4"
+serialport   = "4.3"

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use termhub_core::{DriverEvent, Hub, SessionMgr, UpstreamDriver};
+use termhub_core::{DriverEvent, Hub, SessionMgr, SessionStatus, UpstreamDriver};
 use termhub_drivers::loopback::LoopbackDriver;
 use termhub_sshd::{start as sshd_start, ServerConfig as SshdConfig};
 use tokio::sync::mpsc;
@@ -35,7 +35,27 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
     spawn_loopback(up_tx, up_rx, cancel.clone());
-    let _ = st.send(termhub_core::SessionStatus::Running { uptime_secs: 0 });
+    let _ = st.send(SessionStatus::Running { uptime_secs: 0 });
+
+    if let Ok(port) = std::env::var("TERMHUB_DEV_SERIAL") {
+        let baud: u32 = std::env::var("TERMHUB_DEV_BAUD")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(115200);
+        let (hub2, up_tx2, up_rx2) = Hub::new(1024, 256);
+        let (st2, sr2) = termhub_core::session::status_channel();
+        let cancel_serial = CancellationToken::new();
+        mgr.register(
+            "com".to_string(),
+            "pass".to_string(),
+            hub2.handle(),
+            sr2,
+            cancel_serial.clone(),
+        )
+        .await?;
+        spawn_serial(port, baud, up_tx2, up_rx2, cancel_serial);
+        let _ = st2.send(SessionStatus::Running { uptime_secs: 0 });
+    }
 
     let host_key = russh_keys::key::KeyPair::generate_ed25519().expect("ed25519 host key");
     let (_sshd, addr) = sshd_start(
@@ -80,4 +100,38 @@ fn spawn_loopback(
         let mut d = LoopbackDriver::default();
         let _ = d.run(up_rx, evt_tx, cancel).await;
     });
+}
+
+fn spawn_serial(
+    port: String,
+    baud: u32,
+    up_tx: mpsc::Sender<Bytes>,
+    up_rx: mpsc::Receiver<Bytes>,
+    cancel: CancellationToken,
+) {
+    use termhub_drivers::eol::EolMode;
+    use termhub_drivers::serial::{parse_serial_params, SerialDriver};
+    let params = parse_serial_params(8, "none", 1, "none").unwrap();
+    let (evt_tx, mut evt_rx) = mpsc::channel::<DriverEvent>(64);
+    let up_forward = up_tx.clone();
+    tokio::spawn(async move {
+        while let Some(e) = evt_rx.recv().await {
+            if let DriverEvent::Output(b) = e {
+                let _ = up_forward.send(b).await;
+            }
+        }
+    });
+    tokio::spawn(async move {
+        let mut d = SerialDriver {
+            port,
+            baud,
+            params,
+            input_eol: EolMode::AsIs,
+            output_eol: EolMode::AsIs,
+        };
+        if let Err(e) = d.run(up_rx, evt_tx, cancel).await {
+            tracing::error!(?e, "serial driver exited");
+        }
+    });
+    let _ = up_tx;
 }
