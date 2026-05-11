@@ -21,6 +21,7 @@ pub struct SshdState {
     pub host_keys: Vec<KeyPair>,
 }
 
+#[derive(Clone)]
 pub struct AppState {
     pub mgr: Arc<SessionMgr>,
     pub runners: Arc<RwLock<HashMap<String, RunnerEntry>>>,
@@ -30,6 +31,8 @@ pub struct AppState {
     pub max_clients_per_session: usize,
     /// Running sshd handle — guarded by an async lock for hot-rebind.
     pub sshd: Arc<RwLock<SshdState>>,
+    /// HTTP API listen address (for CLI).
+    pub api_listen: Arc<RwLock<String>>,
 }
 
 impl AppState {
@@ -42,6 +45,7 @@ impl AppState {
         sshd_cancel: CancellationToken,
         sshd_handle: JoinHandle<()>,
         host_keys: Vec<KeyPair>,
+        api_listen: String,
     ) -> Self {
         Self {
             mgr,
@@ -55,6 +59,7 @@ impl AppState {
                 handle: sshd_handle,
                 host_keys,
             })),
+            api_listen: Arc::new(RwLock::new(api_listen)),
         }
     }
 }

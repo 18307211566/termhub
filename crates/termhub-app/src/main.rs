@@ -1,5 +1,7 @@
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
+mod api_server;
+mod app_logic;
 mod commands;
 mod commands_settings;
 mod hostkey;
@@ -159,6 +161,7 @@ async fn main() -> anyhow::Result<()> {
         sshd_cancel,
         sshd_handle,
         host_keys,
+        stored.server.api_listen.clone(),
     );
     {
         let mut w = app_state.runners.write().await;
@@ -172,6 +175,25 @@ async fn main() -> anyhow::Result<()> {
         "sshd on {first_listen}, example: ssh echo@127.0.0.1 -p {} (password: pass)",
         addr.port()
     );
+
+    // Start HTTP API server for CLI access
+    {
+        let api_state = app_state.clone();
+        let api_listen = stored.server.api_listen.clone();
+        tokio::spawn(async move {
+            match tokio::net::TcpListener::bind(&api_listen).await {
+                Ok(listener) => {
+                    tracing::info!("HTTP API listening on {api_listen}");
+                    if let Err(e) = axum::serve(listener, api_server::api_router(api_state)).await {
+                        tracing::error!("HTTP API server error: {e}");
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to bind HTTP API on {api_listen}: {e}");
+                }
+            }
+        });
+    }
 
     let runners_for_status = app_state.runners.clone();
 
