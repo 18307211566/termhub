@@ -45,6 +45,7 @@ export interface SessionView {
   status: SessionStatus;
   upstream_kind: string;
   upstream_summary: string;
+  upstream: UpstreamSpec;
   auto_reconnect: boolean;
   client_count: number;
 }

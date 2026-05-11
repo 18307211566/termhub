@@ -54,13 +54,15 @@ async fn e2e_loopback_echo() {
     let _ = status_tx.send(termhub_core::SessionStatus::Running { uptime_secs: 0 });
 
     let host_key = russh_keys::key::KeyPair::generate_ed25519().unwrap();
+    let sshd_cancel = CancellationToken::new();
     let (sshd_handle, addr) = start(
         ServerConfig {
             listen: "127.0.0.1:0".to_string(),
-            host_key,
+            host_keys: vec![host_key],
             max_clients_per_session: 16,
         },
         mgr.clone(),
+        sshd_cancel.clone(),
     )
     .await
     .unwrap();
@@ -88,5 +90,6 @@ async fn e2e_loopback_echo() {
     assert!(got.windows(2).any(|window| window == b"hi"), "got = {got:?}");
 
     cancel.cancel();
-    sshd_handle.abort();
+    sshd_cancel.cancel();
+    let _ = sshd_handle.await;
 }

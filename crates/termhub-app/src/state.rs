@@ -3,12 +3,22 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use russh_keys::key::KeyPair;
 use termhub_core::{SessionConfig, SessionMgr, StartedSession};
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 pub struct RunnerEntry {
     pub started: StartedSession,
     pub config: SessionConfig,
+}
+
+/// Tracks the running sshd accept loop so it can be cancelled and rebound.
+pub struct SshdState {
+    pub cancel: CancellationToken,
+    pub handle: JoinHandle<()>,
+    pub host_keys: Vec<KeyPair>,
 }
 
 pub struct AppState {
@@ -18,6 +28,8 @@ pub struct AppState {
     pub host_key_fpr: Arc<RwLock<String>>,
     pub config_dir: PathBuf,
     pub max_clients_per_session: usize,
+    /// Running sshd handle — guarded by an async lock for hot-rebind.
+    pub sshd: Arc<RwLock<SshdState>>,
 }
 
 impl AppState {
@@ -27,6 +39,9 @@ impl AppState {
         fpr: String,
         config_dir: PathBuf,
         max_clients_per_session: usize,
+        sshd_cancel: CancellationToken,
+        sshd_handle: JoinHandle<()>,
+        host_keys: Vec<KeyPair>,
     ) -> Self {
         Self {
             mgr,
@@ -35,6 +50,11 @@ impl AppState {
             host_key_fpr: Arc::new(RwLock::new(fpr)),
             config_dir,
             max_clients_per_session,
+            sshd: Arc::new(RwLock::new(SshdState {
+                cancel: sshd_cancel,
+                handle: sshd_handle,
+                host_keys,
+            })),
         }
     }
 }

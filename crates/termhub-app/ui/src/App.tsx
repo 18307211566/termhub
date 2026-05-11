@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { FormEvent } from "react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
@@ -10,9 +11,11 @@ import {
   kickClient,
   listClients,
   listSessions,
+  restartSession,
   setAutostart,
   setListenAddr,
   stopSession,
+  updateSession,
 } from "./api";
 import type {
   ClientView,
@@ -51,6 +54,11 @@ type UpKind =
   | "serial"
   | "local_shell";
 
+function formatConnectedAt(secs: number): string {
+  const d = new Date(secs * 1000);
+  return d.toLocaleTimeString();
+}
+
 function defaultUpstream(kind: UpKind): UpstreamSpec {
   switch (kind) {
     case "loopback":
@@ -87,10 +95,14 @@ export default function App() {
 
   const [expanded, setExpanded] = useState<string | null>(null);
   const [clients, setClients] = useState<ClientView[]>([]);
+  const [editingSession, setEditingSession] = useState<string | null>(null);
+  const [editPassword, setEditPassword] = useState("");
+  const [editAutoRc, setEditAutoRc] = useState(true);
 
   const [newName, setNewName] = useState("");
   const [newPassword, setNewPassword] = useState("pass");
   const [newAutoRc, setNewAutoRc] = useState(true);
+  const [newPtyOverride, setNewPtyOverride] = useState<{ cols: number; rows: number } | null>(null);
   const [upKind, setUpKind] = useState<UpKind>("loopback");
   const [upstream, setUpstream] = useState<UpstreamSpec>(() => defaultUpstream("loopback"));
   const [shellArgsText, setShellArgsText] = useState("/c\necho hello");
@@ -147,6 +159,19 @@ export default function App() {
       drop?.();
     };
   }, []);
+
+  // 1Hz client list refresh when a session is expanded
+  useEffect(() => {
+    if (!expanded) return;
+    // Initial fetch
+    void listClients(expanded).then(setClients).catch(() => {});
+    const interval = setInterval(() => {
+      void listClients(expanded).then(setClients).catch(() => {});
+    }, 1000);
+    return () => {
+      clearInterval(interval);
+    };
+  }, [expanded]);
 
   const upstreamFields = useMemo(() => {
     if (upstream.type === "ssh") {
@@ -218,25 +243,111 @@ export default function App() {
     }
     if (upstream.type === "serial") {
       return (
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid gap-2 sm:grid-cols-3">
           <label className="flex flex-col gap-1 text-sm">
             <span className="text-slate-400">端口</span>
-            <input
-              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
-              value={upstream.port}
-              onChange={(e) => setUpstream({ ...upstream, port: e.target.value })}
-            />
+            <div className="flex gap-1">
+              <input
+                className="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
+                value={upstream.port}
+                onChange={(e) => setUpstream({ ...upstream, port: e.target.value })}
+                placeholder="COM3"
+              />
+              <button
+                type="button"
+                className="rounded-lg border border-slate-600 px-2 text-xs hover:bg-slate-800"
+                onClick={async () => {
+                  try {
+                    const ports: string[] = await invoke("list_serial_ports");
+                    if (ports.length > 0) {
+                      setUpstream({ ...upstream, port: ports[0] });
+                    }
+                  } catch { /* ignore */ }
+                }}
+              >
+                扫描
+              </button>
+            </div>
           </label>
           <label className="flex flex-col gap-1 text-sm">
             <span className="text-slate-400">波特率</span>
-            <input
-              type="number"
+            <select
               className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
               value={upstream.baud}
-              onChange={(e) =>
-                setUpstream({ ...upstream, baud: Number(e.target.value) || 9600 })
-              }
-            />
+              onChange={(e) => setUpstream({ ...upstream, baud: Number(e.target.value) })}
+            >
+              {[9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600].map((b) => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-slate-400">数据位</span>
+            <select
+              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
+              value={upstream.data_bits}
+              onChange={(e) => setUpstream({ ...upstream, data_bits: Number(e.target.value) as 5|6|7|8 })}
+            >
+              {[5, 6, 7, 8].map((b) => <option key={b} value={b}>{b}</option>)}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-slate-400">校验</span>
+            <select
+              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
+              value={upstream.parity}
+              onChange={(e) => setUpstream({ ...upstream, parity: e.target.value })}
+            >
+              <option value="none">None</option>
+              <option value="even">Even</option>
+              <option value="odd">Odd</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-slate-400">停止位</span>
+            <select
+              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
+              value={upstream.stop_bits}
+              onChange={(e) => setUpstream({ ...upstream, stop_bits: Number(e.target.value) as 1|2 })}
+            >
+              <option value={1}>1</option>
+              <option value={2}>2</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-slate-400">流控</span>
+            <select
+              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
+              value={upstream.flow}
+              onChange={(e) => setUpstream({ ...upstream, flow: e.target.value })}
+            >
+              <option value="none">None</option>
+              <option value="hardware">Hardware (RTS/CTS)</option>
+              <option value="software">Software (XON/XOFF)</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-slate-400">输入行结束</span>
+            <select
+              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
+              value={upstream.input_eol}
+              onChange={(e) => setUpstream({ ...upstream, input_eol: e.target.value })}
+            >
+              <option value="as_is">不改</option>
+              <option value="cr_to_crnl">\r → \r\n</option>
+              <option value="cr_to_nl">\r → \n</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-slate-400">输出行结束</span>
+            <select
+              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
+              value={upstream.output_eol}
+              onChange={(e) => setUpstream({ ...upstream, output_eol: e.target.value })}
+            >
+              <option value="as_is">不改</option>
+              <option value="cr_to_crnl">\r → \r\n</option>
+            </select>
           </label>
         </div>
       );
@@ -302,7 +413,7 @@ export default function App() {
       name: newName.trim(),
       password: newPassword,
       auto_reconnect: newAutoRc,
-      pty_override: null,
+      pty_override: newPtyOverride,
       upstream: up,
     };
     try {
@@ -333,6 +444,29 @@ export default function App() {
     }
   }
 
+  async function switchToLocalhost() {
+    if (!server) return;
+    const port = server.listen.split(":").pop() || "2222";
+    try {
+      await setListenAddr(`127.0.0.1:${port}`);
+      await refreshServer();
+    } catch (e) {
+      setErr(String(e));
+    }
+  }
+
+  async function copyFingerprint() {
+    if (!server) return;
+    try {
+      await navigator.clipboard.writeText(server.host_key_fpr);
+    } catch {
+      // fallback: select text
+      setErr("复制失败，请手动选中复制");
+    }
+  }
+
+  const isPublicListen = server ? server.listen.startsWith("0.0.0.0") : false;
+
   return (
     <div className="min-h-screen bg-slate-950 px-4 py-6 text-slate-100">
       <div className="mx-auto flex max-w-5xl flex-col gap-6">
@@ -356,6 +490,28 @@ export default function App() {
           </div>
         )}
 
+        {server && isPublicListen && (
+          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-800/80 bg-amber-950/40 px-4 py-3 text-sm text-amber-200">
+            <span className="font-medium">
+              监听 {server.listen} — 局域网内任何人知道密码即可接入
+            </span>
+            <button
+              type="button"
+              className="rounded-lg border border-amber-600 px-3 py-1 text-xs font-medium hover:bg-amber-900/50"
+              onClick={() => void switchToLocalhost()}
+            >
+              改为仅本机
+            </button>
+            <button
+              type="button"
+              className="rounded-lg border border-amber-600 px-3 py-1 text-xs font-medium hover:bg-amber-900/50"
+              onClick={() => void copyFingerprint()}
+            >
+              复制指纹
+            </button>
+          </div>
+        )}
+
         <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 shadow-xl">
           <h2 className="mb-4 text-lg font-medium text-white">服务器</h2>
           {server && (
@@ -368,7 +524,16 @@ export default function App() {
               </div>
               <div className="break-all">
                 <span className="text-slate-400">Host key SHA256</span>
-                <div className="mt-1 font-mono text-xs text-slate-300">{server.host_key_fpr}</div>
+                <div className="mt-1 flex items-center gap-2">
+                  <span className="font-mono text-xs text-slate-300">{server.host_key_fpr}</span>
+                  <button
+                    type="button"
+                    className="rounded border border-slate-600 px-2 py-0.5 text-xs hover:bg-slate-800"
+                    onClick={() => void copyFingerprint()}
+                  >
+                    复制
+                  </button>
+                </div>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-3">
                 <input
@@ -389,9 +554,6 @@ export default function App() {
                   开机自启
                 </label>
               </div>
-              <p className="text-xs text-slate-500">
-                修改监听地址目前仅更新内存中的展示值；要让 SSH server 实际换绑请重启应用（后续可接热重载）。
-              </p>
             </div>
           )}
         </section>
@@ -412,11 +574,24 @@ export default function App() {
               </label>
               <label className="flex flex-col gap-1 text-sm">
                 <span className="text-slate-400">SSH 密码（下联登录）</span>
-                <input
-                  className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                />
+                <div className="flex gap-1">
+                  <input
+                    className="flex-1 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="rounded-lg border border-slate-600 px-2 text-xs hover:bg-slate-800"
+                    onClick={() => {
+                      const chars = "abcdefghijkmnpqrstuvwxyz23456789";
+                      const arr = Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]);
+                      setNewPassword(arr.join(""));
+                    }}
+                  >
+                    随机
+                  </button>
+                </div>
               </label>
               <label className="flex items-center gap-2 pt-6 text-sm text-slate-300">
                 <input
@@ -426,6 +601,42 @@ export default function App() {
                 />
                 自动重连
               </label>
+              <label className="flex items-center gap-2 pt-6 text-sm text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={newPtyOverride !== null}
+                  onChange={(e) =>
+                    setNewPtyOverride(e.target.checked ? { cols: 80, rows: 24 } : null)
+                  }
+                />
+                PTY 覆盖
+              </label>
+              {newPtyOverride && (
+                <>
+                  <label className="flex flex-col gap-1 text-sm">
+                    <span className="text-slate-400">列</span>
+                    <input
+                      type="number"
+                      className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
+                      value={newPtyOverride.cols}
+                      onChange={(e) =>
+                        setNewPtyOverride({ ...newPtyOverride, cols: Number(e.target.value) || 80 })
+                      }
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-sm">
+                    <span className="text-slate-400">行</span>
+                    <input
+                      type="number"
+                      className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
+                      value={newPtyOverride.rows}
+                      onChange={(e) =>
+                        setNewPtyOverride({ ...newPtyOverride, rows: Number(e.target.value) || 24 })
+                      }
+                    />
+                  </label>
+                </>
+              )}
             </div>
 
             <label className="flex flex-col gap-1 text-sm">
@@ -490,6 +701,28 @@ export default function App() {
                           </button>
                           <button
                             type="button"
+                            className="rounded border border-emerald-800 px-2 py-1 text-xs text-emerald-200 hover:bg-emerald-950/50"
+                            onClick={() =>
+                              void restartSession(s.name)
+                                .then(refreshSessions)
+                                .catch((e) => setErr(String(e)))
+                            }
+                          >
+                            重启
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded border border-blue-800 px-2 py-1 text-xs text-blue-200 hover:bg-blue-950/50"
+                            onClick={() => {
+                              setEditingSession(s.name);
+                              setEditPassword(s.name === editingSession ? editPassword : "");
+                              setEditAutoRc(s.auto_reconnect);
+                            }}
+                          >
+                            编辑
+                          </button>
+                          <button
+                            type="button"
                             className="rounded border border-amber-800 px-2 py-1 text-xs text-amber-200 hover:bg-amber-950/50"
                             onClick={() =>
                               void stopSession(s.name).then(refreshSessions).catch((e) => setErr(String(e)))
@@ -526,7 +759,7 @@ export default function App() {
                                     #{c.id} {c.remote}
                                   </span>
                                   <span className="text-slate-500">
-                                    in {c.bytes_in} · out {c.bytes_out}
+                                    {formatConnectedAt(c.connected_at_secs)} · in {c.bytes_in} · out {c.bytes_out}
                                   </span>
                                   <button
                                     type="button"
@@ -552,6 +785,68 @@ export default function App() {
             </table>
           </div>
         </section>
+
+        {editingSession && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+            <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+              <h3 className="mb-4 text-lg font-medium text-white">编辑会话: {editingSession}</h3>
+              <form
+                className="flex flex-col gap-4"
+                onSubmit={(ev) => {
+                  ev.preventDefault();
+                  const s = sessions.find((x) => x.name === editingSession);
+                  if (!s) return;
+                  const cfg: SessionConfig = {
+                    name: editingSession,
+                    password: editPassword || "pass",
+                    auto_reconnect: editAutoRc,
+                    pty_override: null,
+                    upstream: s.upstream,
+                  };
+                  void updateSession(editingSession, cfg)
+                    .then(() => {
+                      setEditingSession(null);
+                      void refreshSessions();
+                    })
+                    .catch((e) => setErr(String(e)));
+                }}
+              >
+                <label className="flex flex-col gap-1 text-sm">
+                  <span className="text-slate-400">SSH 密码</span>
+                  <input
+                    className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2"
+                    value={editPassword}
+                    onChange={(e) => setEditPassword(e.target.value)}
+                    placeholder="留空则不变"
+                  />
+                </label>
+                <label className="flex items-center gap-2 text-sm text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={editAutoRc}
+                    onChange={(e) => setEditAutoRc(e.target.checked)}
+                  />
+                  自动重连
+                </label>
+                <div className="flex justify-end gap-3">
+                  <button
+                    type="button"
+                    className="rounded-lg border border-slate-600 px-4 py-2 text-sm hover:bg-slate-800"
+                    onClick={() => setEditingSession(null)}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="submit"
+                    className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
+                  >
+                    保存
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

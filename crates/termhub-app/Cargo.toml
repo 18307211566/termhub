@@ -26,9 +26,10 @@ base64 = "0.22"
 bytes = { workspace = true }
 tokio-util = { workspace = true }
 
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "custom-protocol"] }
 tauri-plugin-autostart = "2"
 russh-keys = "0.45"
+serialport = "4.3"
 
 [dev-dependencies]
 russh = "0.45"

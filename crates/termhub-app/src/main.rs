@@ -11,8 +11,8 @@ use std::sync::Arc;
 use tauri::Manager;
 
 use commands::{
-    create_session, delete_session, get_server_info, kick_client, list_clients, list_sessions,
-    spawn_session_status_listener, stop_session,
+    create_session, delete_session, get_server_info, kick_client, list_clients, list_serial_ports,
+    list_sessions, restart_session, spawn_session_status_listener, stop_session, update_session,
 };
 use commands_settings::{get_autostart, set_autostart, set_listen_addr};
 use state::{AppState, RunnerEntry};
@@ -49,9 +49,9 @@ async fn main() -> anyhow::Result<()> {
     let stored = termhub_core::load_or_default(&cfg_dir)?;
 
     let host_key_path = cfg_dir.join(&stored.server.host_key_path);
-    let host_key = hostkey::load_or_create(&host_key_path)?;
-    let fpr = hostkey::fingerprint(&host_key)?;
-    tracing::info!(fingerprint=%fpr, "host key ready");
+    let host_keys = hostkey::load_or_create(&host_key_path)?;
+    let fpr = hostkey::fingerprint(&host_keys[0])?;
+    tracing::info!(fingerprint=%fpr, "host keys ready ({} keys)", host_keys.len());
 
     let mgr = Arc::new(SessionMgr::new());
 
@@ -137,13 +137,16 @@ async fn main() -> anyhow::Result<()> {
         runners_map.insert(cfg.name.to_ascii_lowercase(), RunnerEntry { started, config: cfg });
     }
 
-    let (_sshd, addr) = sshd_start(
+    let sshd_cancel = tokio_util::sync::CancellationToken::new();
+    let host_keys_clone = host_keys.clone();
+    let (sshd_handle, addr) = sshd_start(
         SshdConfig {
             listen: stored.server.listen.clone(),
-            host_key,
+            host_keys: host_keys_clone,
             max_clients_per_session: stored.server.max_clients_per_session,
         },
         mgr.clone(),
+        sshd_cancel.clone(),
     )
     .await?;
 
@@ -153,6 +156,9 @@ async fn main() -> anyhow::Result<()> {
         fpr,
         cfg_dir,
         stored.server.max_clients_per_session,
+        sshd_cancel,
+        sshd_handle,
+        host_keys,
     );
     {
         let mut w = app_state.runners.write().await;
@@ -180,8 +186,11 @@ async fn main() -> anyhow::Result<()> {
             create_session,
             stop_session,
             delete_session,
+            restart_session,
+            update_session,
             list_clients,
             kick_client,
+            list_serial_ports,
             get_server_info,
             set_listen_addr,
             get_autostart,

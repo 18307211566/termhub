@@ -56,6 +56,31 @@ impl Handler for ClientHandler {
         Ok(true)
     }
 
+    async fn pty_request(
+        &mut self,
+        channel: ChannelId,
+        _term: &str,
+        _col_width: u32,
+        _row_height: u32,
+        _pix_width: u32,
+        _pix_height: u32,
+        _modes: &[(russh::Pty, u32)],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        session.channel_success(channel);
+        Ok(())
+    }
+
+    async fn env_request(
+        &mut self,
+        _channel: ChannelId,
+        _variable_name: &str,
+        _variable_value: &str,
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     async fn shell_request(
         &mut self,
         channel: ChannelId,

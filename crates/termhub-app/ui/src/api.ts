@@ -23,6 +23,14 @@ export async function deleteSession(name: string): Promise<void> {
   return invoke("delete_session", { name });
 }
 
+export async function restartSession(name: string): Promise<void> {
+  return invoke("restart_session", { name });
+}
+
+export async function updateSession(name: string, config: SessionConfig): Promise<void> {
+  return invoke("update_session", { args: { name, config } });
+}
+
 export async function listClients(name: string): Promise<ClientView[]> {
   return invoke("list_clients", { name });
 }

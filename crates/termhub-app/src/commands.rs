@@ -55,6 +55,7 @@ pub struct SessionView {
     pub status: SessionStatus,
     pub upstream_kind: String,
     pub upstream_summary: String,
+    pub upstream: UpstreamSpec,
     pub auto_reconnect: bool,
     pub client_count: usize,
 }
@@ -66,13 +67,14 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionView
     for entry in state.mgr.list().await {
         let key = entry.name.to_ascii_lowercase();
         let status = entry.status.borrow().clone();
-        let (kind, summary, auto_rc) = match runners.get(&key) {
+        let (kind, summary, upstream, auto_rc) = match runners.get(&key) {
             Some(r) => (
                 upstream_kind_label(&r.config.upstream),
                 upstream_summary(&r.config.upstream),
+                r.config.upstream.clone(),
                 r.config.auto_reconnect,
             ),
-            None => ("unknown".to_string(), String::new(), true),
+            None => ("unknown".to_string(), String::new(), UpstreamSpec::Loopback, true),
         };
         let client_count = entry.clients.list().await.len();
         out.push(SessionView {
@@ -80,6 +82,7 @@ pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionView
             status,
             upstream_kind: kind,
             upstream_summary: summary,
+            upstream,
             auto_reconnect: auto_rc,
             client_count,
         });
@@ -197,6 +200,102 @@ pub async fn delete_session(name: String, state: State<'_, AppState>) -> Result<
     stop_session(name, state).await
 }
 
+#[tauri::command]
+pub async fn restart_session(name: String, state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
+    let key = name.to_ascii_lowercase();
+    let cfg = {
+        let runners = state.runners.read().await;
+        runners.get(&key).map(|r| r.config.clone())
+    };
+    let Some(cfg) = cfg else {
+        return Err("no such session".to_string());
+    };
+    stop_session(name.clone(), state.clone()).await?;
+    let spec = cfg.upstream.clone();
+    let factory: termhub_core::runner::DriverFactory =
+        Box::new(move || create_driver(&spec).expect("driver factory"));
+    let started = start_session(
+        state.mgr.clone(),
+        cfg.name.clone(),
+        cfg.password.clone(),
+        factory,
+        RunnerConfig {
+            auto_reconnect: cfg.auto_reconnect,
+            max_attempts: None,
+        },
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    spawn_session_status_listener(app, cfg.name.clone(), started.status_rx.clone());
+
+    state.runners.write().await.insert(
+        key,
+        RunnerEntry {
+            started,
+            config: cfg,
+        },
+    );
+    Ok(())
+}
+
+#[derive(Deserialize)]
+pub struct UpdateSessionArgs {
+    pub name: String,
+    pub config: SessionConfig,
+}
+
+#[tauri::command]
+pub async fn update_session(
+    args: UpdateSessionArgs,
+    state: State<'_, AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let old_key = args.name.to_ascii_lowercase();
+    let new_key = args.config.name.to_ascii_lowercase();
+
+    // Stop the old runner if it exists
+    {
+        let mut runners = state.runners.write().await;
+        if let Some(r) = runners.remove(&old_key) {
+            r.started.cancel.cancel();
+            let _ = r.started.handle.await;
+        }
+    }
+    state.mgr.unregister(&args.name).await;
+
+    // Start with the new config
+    let cfg = args.config;
+    let spec = cfg.upstream.clone();
+    let factory: termhub_core::runner::DriverFactory =
+        Box::new(move || create_driver(&spec).expect("driver factory"));
+    let started = start_session(
+        state.mgr.clone(),
+        cfg.name.clone(),
+        cfg.password.clone(),
+        factory,
+        RunnerConfig {
+            auto_reconnect: cfg.auto_reconnect,
+            max_attempts: None,
+        },
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    spawn_session_status_listener(app, cfg.name.clone(), started.status_rx.clone());
+
+    state.runners.write().await.insert(
+        new_key,
+        RunnerEntry {
+            started,
+            config: cfg,
+        },
+    );
+
+    let _ = persist_now(&state).await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[derive(Serialize)]
 pub struct ClientView {
     pub id: u64,
@@ -252,4 +351,11 @@ pub async fn get_server_info(state: State<'_, AppState>) -> Result<ServerInfo, S
         listen: state.server_listen_addr.read().await.to_string(),
         host_key_fpr: state.host_key_fpr.read().await.clone(),
     })
+}
+
+#[tauri::command]
+pub fn list_serial_ports() -> Result<Vec<String>, String> {
+    serialport::available_ports()
+        .map(|ports| ports.into_iter().map(|p| p.port_name).collect())
+        .map_err(|e| e.to_string())
 }

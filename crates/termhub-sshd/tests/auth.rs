@@ -35,12 +35,13 @@ async fn password_auth_accept_or_reject() {
     .unwrap();
 
     let host_key = russh_keys::key::KeyPair::generate_ed25519().unwrap();
+    let sshd_cancel = tokio_util::sync::CancellationToken::new();
     let cfg = ServerConfig {
         listen: "127.0.0.1:0".to_string(),
-        host_key,
+        host_keys: vec![host_key],
         max_clients_per_session: 16,
     };
-    let (handle, addr) = start(cfg, mgr.clone()).await.unwrap();
+    let (handle, addr) = start(cfg, mgr.clone(), sshd_cancel.clone()).await.unwrap();
 
     let cc = Arc::new(client::Config::default());
     let mut s = client::connect(cc.clone(), addr, ClientHandler).await.unwrap();
@@ -49,5 +50,6 @@ async fn password_auth_accept_or_reject() {
     let mut s2 = client::connect(cc, addr, ClientHandler).await.unwrap();
     assert!(!s2.authenticate_password("echo", "wrong").await.unwrap());
 
-    handle.abort();
+    sshd_cancel.cancel();
+    let _ = handle.await;
 }
