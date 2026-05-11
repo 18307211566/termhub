@@ -18,6 +18,9 @@ pub struct ServerConfig {
     pub host_key_path: String,
     #[serde(default = "default_max_clients")]
     pub max_clients_per_session: usize,
+    /// HTTP API 监听地址（供 CLI 使用）
+    #[serde(default = "default_api_listen")]
+    pub api_listen: String,
 }
 
 fn default_hostkey() -> String {
@@ -25,6 +28,9 @@ fn default_hostkey() -> String {
 }
 fn default_max_clients() -> usize {
     16
+}
+fn default_api_listen() -> String {
+    "127.0.0.1:2223".into()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

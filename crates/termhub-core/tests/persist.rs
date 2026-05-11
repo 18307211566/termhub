@@ -11,6 +11,7 @@ fn save_then_load_roundtrip() {
             listen: "127.0.0.1:2222".into(),
             host_key_path: "host_key".into(),
             max_clients_per_session: 16,
+            api_listen: "127.0.0.1:2223".into(),
         },
         ui: UiConfig::default(),
         sessions: vec![SessionConfig {

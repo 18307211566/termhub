@@ -44,6 +44,7 @@ pub fn load_or_default(dir: &Path) -> anyhow::Result<Config> {
                 listen: "0.0.0.0:2222".into(),
                 host_key_path: "host_key".into(),
                 max_clients_per_session: 16,
+                api_listen: "127.0.0.1:2223".into(),
             },
             ui: crate::config::UiConfig::default(),
             sessions: vec![],
