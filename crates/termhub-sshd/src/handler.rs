@@ -15,6 +15,7 @@ pub struct ClientHandler {
     entry: Option<SessionEntry>,
     forward_task: Option<JoinHandle<()>>,
     client_rec: Option<Arc<ClientRecord>>,
+    is_exec: bool,
 }
 
 impl ClientHandler {
@@ -27,7 +28,122 @@ impl ClientHandler {
             entry: None,
             forward_task: None,
             client_rec: None,
+            is_exec: false,
         }
+    }
+
+    /// Common logic for shell_request and exec_request:
+    /// attach client, start output-forward task.
+    async fn start_shell_or_exec(
+        &mut self,
+        channel: ChannelId,
+        session: &mut Session,
+        initial_input: Option<Bytes>,
+        is_exec: bool,
+    ) {
+        let entry = match self.entry.clone() {
+            Some(entry) => entry,
+            None => {
+                let _ = session.close(channel);
+                return;
+            }
+        };
+
+        if entry.hub.subscriber_count() >= self.max_clients {
+            let _ = session.data(
+                channel,
+                CryptoVec::from_slice(b"*** termhub: session is full\r\n"),
+            );
+            let _ = session.close(channel);
+            return;
+        }
+
+        let _ = session.channel_success(channel);
+        let remote = self.peer.clone();
+        let rec = entry.clients.attach(remote).await;
+        self.client_rec = Some(rec.clone());
+        self.is_exec = is_exec;
+
+        // If there's initial input (from exec_request), write it to upstream immediately.
+        if let Some(b) = initial_input {
+            let _ = entry.hub.send_input(b.clone()).await;
+            rec.bytes_in.fetch_add(b.len() as u64, Ordering::Relaxed);
+        }
+
+        let mut rx = entry.hub.subscribe_output();
+        let handle: Handle = session.handle();
+        let kick = rec.kick.clone();
+
+        // For exec channels: if upstream is silent for 3s, assume command finished.
+        let silence_timeout = if is_exec {
+            std::time::Duration::from_secs(3)
+        } else {
+            std::time::Duration::from_secs(365 * 24 * 60 * 60)
+        };
+        let mut sleep = Box::pin(tokio::time::sleep(silence_timeout));
+
+        let task = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = kick.cancelled() => {
+                        if is_exec {
+                            let _ = handle.exit_status_request(channel, 0).await;
+                            let _ = handle.close(channel).await;
+                        } else {
+                            let _ = handle
+                                .data(
+                                    channel,
+                                    CryptoVec::from_slice(b"*** termhub: kicked by host\r\n"),
+                                )
+                                .await;
+                            let _ = handle.close(channel).await;
+                        }
+                        break;
+                    }
+                    _ = &mut sleep => {
+                        if is_exec {
+                            let _ = handle.exit_status_request(channel, 0).await;
+                            let _ = handle.close(channel).await;
+                        }
+                        break;
+                    }
+                    msg = rx.recv() => match msg {
+                        Ok(b) => {
+                            if is_exec {
+                                sleep.as_mut().reset(tokio::time::Instant::now() + silence_timeout);
+                            }
+                            rec.bytes_out
+                                .fetch_add(b.len() as u64, Ordering::Relaxed);
+                            if handle
+                                .data(channel, CryptoVec::from_slice(&b))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            let _ = handle
+                                .data(
+                                    channel,
+                                    CryptoVec::from_slice(
+                                        b"\x1b[33m*** termhub: client lagged, output truncated\x1b[0m\r\n",
+                                    ),
+                                )
+                                .await;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            if is_exec {
+                                let _ = handle.exit_status_request(channel, 0).await;
+                                let _ = handle.close(channel).await;
+                            }
+                            break;
+                        }
+                    },
+                }
+            }
+        });
+        self.forward_task = Some(task);
     }
 }
 
@@ -86,74 +202,29 @@ impl Handler for ClientHandler {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        let entry = match self.entry.clone() {
-            Some(entry) => entry,
-            None => {
-                session.close(channel);
-                return Ok(());
-            }
-        };
+        self.start_shell_or_exec(channel, session, None, false).await;
+        Ok(())
+    }
 
-        if entry.hub.subscriber_count() >= self.max_clients {
-            session.data(
-                channel,
-                CryptoVec::from_slice(b"*** termhub: session is full\r\n"),
-            );
-            session.close(channel);
-            return Ok(());
-        }
-
-        session.channel_success(channel);
-        let remote = self.peer.clone();
-        let rec = entry.clients.attach(remote).await;
-        self.client_rec = Some(rec.clone());
-
-        let mut rx = entry.hub.subscribe_output();
-        let handle: Handle = session.handle();
-        let kick = rec.kick.clone();
-
-        let task = tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = kick.cancelled() => {
-                        let _ = handle
-                            .data(
-                                channel,
-                                CryptoVec::from_slice(b"*** termhub: kicked by host\r\n"),
-                            )
-                            .await;
-                        let _ = handle.close(channel).await;
-                        break;
-                    }
-                    msg = rx.recv() => match msg {
-                        Ok(b) => {
-                            rec.bytes_out
-                                .fetch_add(b.len() as u64, Ordering::Relaxed);
-                            if handle
-                                .data(channel, CryptoVec::from_slice(&b))
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                            let _ = handle
-                                .data(
-                                    channel,
-                                    CryptoVec::from_slice(
-                                        b"\x1b[33m*** termhub: client lagged, output truncated\x1b[0m\r\n",
-                                    ),
-                                )
-                                .await;
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    },
+    async fn exec_request(
+        &mut self,
+        channel: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        let initial = if data.is_empty() {
+            None
+        } else {
+            let mut v = data.to_vec();
+            if !v.ends_with(b"\n") {
+                if !v.ends_with(b"\r") {
+                    v.push(b'\r');
                 }
+                v.push(b'\n');
             }
-        });
-        self.forward_task = Some(task);
-
+            Some(Bytes::from(v))
+        };
+        self.start_shell_or_exec(channel, session, initial, true).await;
         Ok(())
     }
 
@@ -169,6 +240,26 @@ impl Handler for ClientHandler {
                 rec.bytes_in
                     .fetch_add(data.len() as u64, Ordering::Relaxed);
             }
+        }
+        Ok(())
+    }
+
+    async fn channel_eof(
+        &mut self,
+        channel: ChannelId,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        if self.is_exec {
+            // For exec channels, client EOF means no more input.
+            // Signal exit and close so the ssh client can terminate cleanly.
+            if let Some(task) = self.forward_task.take() {
+                task.abort();
+            }
+            if let (Some(rec), Some(entry)) = (self.client_rec.take(), self.entry.as_ref()) {
+                entry.clients.detach(rec.id).await;
+            }
+            session.exit_status_request(channel, 0);
+            session.close(channel);
         }
         Ok(())
     }
