@@ -53,27 +53,109 @@ termhub/
 │  ├─ termhub-core/      # Hub / SessionMgr / Driver trait / 配置 / 状态机 / DPAPI
 │  ├─ termhub-drivers/   # Serial / SSH / Telnet / RawTcp / LocalShell / Loopback
 │  ├─ termhub-sshd/      # 下联 SSH server (russh)
-│  └─ termhub-app/       # Tauri 主二进制 + React 前端
+│  ├─ termhub-app/       # Tauri 主二进制 + React 前端
+│  └─ termhub-cli/       # CLI 工具（供 AI Agent 或脚本调用 HTTP API）
 └─ docs/superpowers/     # 设计文档与开发计划
+```
+
+## 环境准备
+
+| 依赖 | 最低版本 | 说明 |
+|---|---|---|
+| Rust | stable (1.79+) | 通过 [rustup](https://rustup.rs/) 安装，项目根目录 `rust-toolchain.toml` 会自动选择 stable 频道 |
+| Node.js | 18+ | 用于构建 React 前端 |
+| npm | 9+ | 随 Node.js 安装 |
+
+首次安装 Rust 工具链后，确保已安装 Tauri CLI：
+
+```bash
+cargo install tauri-cli --version "^2"
 ```
 
 ## 开发
 
-需要 Rust 1.79+ 和 Node.js 18+。
-
 ```bash
-# 前端依赖
-cd crates/termhub-app/ui && npm ci && cd ../../..
+# 安装前端依赖（首次或 package.json 变更后）
+cd crates/termhub-app/ui && npm install && cd ../../..
 
 # 开发模式（前端 hot reload + Tauri 窗口）
-cargo run -p termhub-app
+cargo tauri dev
 
 # 运行测试
 cargo test --workspace
-
-# 构建 MSI
-cargo build -p termhub-app --release
 ```
+
+## 编译打包
+
+### 构建 MSI 安装包
+
+```bash
+# 确保前端依赖已安装
+cd crates/termhub-app/ui && npm install && cd ../../..
+
+# 构建（自动编译 Rust + 打包前端 + 生成 MSI）
+cargo tauri build
+```
+
+构建完成后，MSI 安装包位于：
+
+```
+target/release/bundle/msi/termhub_0.1.0_x64_en-US.msi
+```
+
+### 仅编译 Rust（不打包）
+
+```bash
+# Release 模式
+cargo build --workspace --release
+
+# Debug 模式
+cargo build --workspace
+```
+
+编译产物：
+
+| 二进制 | 路径 |
+|---|---|
+| termhub（桌面应用） | `target/release/termhub.exe` |
+| termhub-cli（命令行工具） | `target/release/termhub-cli.exe` |
+
+### 常见问题
+
+- **`npm ci` 报错找不到 `package-lock.json`**：先运行 `npm install` 生成锁文件
+- **编译时 `termhub.exe` 被占用**：关闭正在运行的 TermHub 桌面应用
+- **`cargo: command not found`**：重新打开终端或运行 `source ~/.cargo/env`
+
+## CLI 命令行工具
+
+termhub-cli 通过 HTTP API 操作 TermHub，适合脚本和 AI Agent 调用。TermHub 桌面应用需先运行。
+
+```bash
+# 查看所有会话
+termhub-cli session list
+
+# 创建会话
+termhub-cli session create <名称> <密码> --upstream loopback
+termhub-cli session create <名称> <密码> --upstream serial --port COM3 --baud 115200
+termhub-cli session create <名称> <密码> --upstream ssh --host 192.168.1.10 --user admin --password secret
+termhub-cli session create <名称> <密码> --upstream local-shell --command powershell
+
+# 停止 / 重启 / 删除会话
+termhub-cli session stop <名称>
+termhub-cli session restart <名称>
+termhub-cli session delete <名称>
+
+# 查看会话客户端
+termhub-cli client list <会话名>
+
+# 查看服务器信息
+termhub-cli server info
+
+# 列出串口
+termhub-cli serial-ports
+```
+
+所有命令支持 `--json` 输出机器可读的 JSON 格式。
 
 ## 许可证
 

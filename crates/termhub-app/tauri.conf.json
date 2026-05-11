@@ -7,7 +7,7 @@
     "frontendDist": "ui/dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev --prefix ui",
-    "beforeBuildCommand": "npm ci --prefix ui && npm run build --prefix ui"
+    "beforeBuildCommand": "cd termhub-app/ui && npm install && npm run build"
   },
   "app": {
     "security": {
