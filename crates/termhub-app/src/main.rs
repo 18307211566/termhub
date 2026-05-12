@@ -77,27 +77,49 @@ async fn main() -> anyhow::Result<()> {
     }
 
     for s in sessions_to_start {
-        let spec = s.upstream.clone();
-        let factory: termhub_core::runner::DriverFactory =
-            Box::new(move || create_driver(&spec).expect("driver factory"));
-        let started = start_session(
-            mgr.clone(),
-            s.name.clone(),
-            s.password.clone(),
-            factory,
-            RunnerConfig {
-                auto_reconnect: s.auto_reconnect,
-                max_attempts: None,
-            },
-        )
-        .await?;
-        runners_map.insert(
-            s.name.to_ascii_lowercase(),
-            RunnerEntry {
-                started,
-                config: s,
-            },
-        );
+        if let UpstreamSpec::HttpProxy { ref listen, ref target } = s.upstream {
+            // HTTP 代理模式：不经过 Hub，直接启动 TCP 代理
+            let cancel = tokio_util::sync::CancellationToken::new();
+            let listen = listen.clone();
+            let target = target.clone();
+            let proxy_cancel = cancel.clone();
+            tokio::spawn(async move {
+                if let Err(e) = termhub_drivers::http_proxy::run_http_proxy(&listen, &target, cancel).await {
+                    tracing::error!(%listen, %target, "http proxy error: {e}");
+                }
+            });
+            runners_map.insert(
+                s.name.to_ascii_lowercase(),
+                RunnerEntry {
+                    started: None,
+                    config: s,
+                    proxy_cancel: Some(proxy_cancel),
+                },
+            );
+        } else {
+            let spec = s.upstream.clone();
+            let factory: termhub_core::runner::DriverFactory =
+                Box::new(move || create_driver(&spec).expect("driver factory"));
+            let started = start_session(
+                mgr.clone(),
+                s.name.clone(),
+                s.password.clone(),
+                factory,
+                RunnerConfig {
+                    auto_reconnect: s.auto_reconnect,
+                    max_attempts: None,
+                },
+            )
+            .await?;
+            runners_map.insert(
+                s.name.to_ascii_lowercase(),
+                RunnerEntry {
+                    started: Some(started),
+                    config: s,
+                    proxy_cancel: None,
+                },
+            );
+        }
     }
 
     if let Ok(port) = std::env::var("TERMHUB_DEV_SERIAL") {
@@ -136,7 +158,7 @@ async fn main() -> anyhow::Result<()> {
             },
         )
         .await?;
-        runners_map.insert(cfg.name.to_ascii_lowercase(), RunnerEntry { started, config: cfg });
+        runners_map.insert(cfg.name.to_ascii_lowercase(), RunnerEntry { started: Some(started), config: cfg, proxy_cancel: None });
     }
 
     let sshd_cancel = tokio_util::sync::CancellationToken::new();
@@ -224,11 +246,13 @@ async fn main() -> anyhow::Result<()> {
             tauri::async_runtime::spawn(async move {
                 let snapshot = runners_arc.read().await;
                 for (_k, entry) in snapshot.iter() {
-                    spawn_session_status_listener(
-                        app_h.clone(),
-                        entry.config.name.clone(),
-                        entry.started.status_rx.clone(),
-                    );
+                    if let Some(ref started) = entry.started {
+                        spawn_session_status_listener(
+                            app_h.clone(),
+                            entry.config.name.clone(),
+                            started.status_rx.clone(),
+                        );
+                    }
                 }
             });
 

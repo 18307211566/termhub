@@ -1,5 +1,6 @@
 pub mod eol;
 pub mod factory;
+pub mod http_proxy;
 pub mod local_shell;
 pub mod loopback;
 pub mod raw_tcp;

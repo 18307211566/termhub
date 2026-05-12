@@ -103,6 +103,11 @@ pub enum UpstreamSpec {
         #[serde(default)]
         args: Vec<String>,
     },
+    /// HTTP 反向代理：监听 listen，将 HTTP 请求转发到 target
+    HttpProxy {
+        listen: String,
+        target: String,
+    },
 }
 
 fn default_8() -> u8 {

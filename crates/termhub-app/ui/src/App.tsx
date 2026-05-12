@@ -52,7 +52,8 @@ type UpKind =
   | "telnet"
   | "raw_tcp"
   | "serial"
-  | "local_shell";
+  | "local_shell"
+  | "http_proxy";
 
 function formatConnectedAt(secs: number): string {
   const d = new Date(secs * 1000);
@@ -83,6 +84,8 @@ function defaultUpstream(kind: UpKind): UpstreamSpec {
       };
     case "local_shell":
       return { type: "local_shell", command: "cmd.exe", args: ["/c", "echo hello"] };
+    case "http_proxy":
+      return { type: "http_proxy", listen: "0.0.0.0:8080", target: "127.0.0.1:80" };
   }
 }
 
@@ -382,6 +385,30 @@ export default function App() {
         </div>
       );
     }
+    if (upstream.type === "http_proxy") {
+      return (
+        <div className="grid gap-2 sm:grid-cols-2">
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-slate-400">本地监听地址</span>
+            <input
+              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
+              value={upstream.listen}
+              onChange={(e) => setUpstream({ ...upstream, listen: e.target.value })}
+              placeholder="0.0.0.0:8080"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-slate-400">目标地址</span>
+            <input
+              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2"
+              value={upstream.target}
+              onChange={(e) => setUpstream({ ...upstream, target: e.target.value })}
+              placeholder="192.168.1.100:80"
+            />
+          </label>
+        </div>
+      );
+    }
     return <p className="text-sm text-slate-500">无需额外字段。</p>;
   }, [upstream, shellArgsText]);
 
@@ -652,6 +679,7 @@ export default function App() {
                 <option value="raw_tcp">原始 TCP</option>
                 <option value="serial">串口</option>
                 <option value="local_shell">本地 Shell（PTY）</option>
+                <option value="http_proxy">HTTP 代理（端口转发）</option>
               </select>
             </label>
 

@@ -51,5 +51,8 @@ pub fn create_driver(spec: &UpstreamSpec) -> anyhow::Result<Box<dyn UpstreamDriv
             cols: 80,
             rows: 24,
         }),
+        UpstreamSpec::HttpProxy { .. } => {
+            anyhow::bail!("HttpProxy does not use UpstreamDriver; it runs as a standalone TCP proxy")
+        }
     })
 }

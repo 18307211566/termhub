@@ -10,8 +10,11 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 pub struct RunnerEntry {
-    pub started: StartedSession,
+    /// 常规会话使用 StartedSession；HTTP 代理会话为 None（不经过 Hub）
+    pub started: Option<StartedSession>,
     pub config: SessionConfig,
+    /// HTTP 代理取消令牌（仅 HttpProxy 类型使用）
+    pub proxy_cancel: Option<CancellationToken>,
 }
 
 /// Tracks the running sshd accept loop so it can be cancelled and rebound.

@@ -30,7 +30,8 @@ export type UpstreamSpec =
     }
   | { type: "telnet"; host: string; port: number }
   | { type: "raw_tcp"; host: string; port: number }
-  | { type: "local_shell"; command: string; args: string[] };
+  | { type: "local_shell"; command: string; args: string[] }
+  | { type: "http_proxy"; listen: string; target: string };
 
 export interface SessionConfig {
   name: string;

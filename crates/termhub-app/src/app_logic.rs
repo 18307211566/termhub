@@ -6,6 +6,8 @@ use termhub_core::{
     UpstreamSpec,
 };
 use termhub_drivers::factory::create_driver;
+use termhub_drivers::http_proxy::run_http_proxy;
+use tokio_util::sync::CancellationToken;
 
 use crate::state::{AppState, RunnerEntry};
 
@@ -75,6 +77,7 @@ pub fn upstream_kind_label(s: &UpstreamSpec) -> String {
         UpstreamSpec::Telnet { .. } => "telnet",
         UpstreamSpec::RawTcp { .. } => "raw_tcp",
         UpstreamSpec::LocalShell { .. } => "local_shell",
+        UpstreamSpec::HttpProxy { .. } => "http_proxy",
     }
     .to_string()
 }
@@ -105,6 +108,7 @@ pub fn upstream_summary(s: &UpstreamSpec) -> String {
         UpstreamSpec::Telnet { host, port } => format!("{host}:{port} (telnet)"),
         UpstreamSpec::RawTcp { host, port } => format!("{host}:{port} (raw)"),
         UpstreamSpec::LocalShell { command, .. } => command.clone(),
+        UpstreamSpec::HttpProxy { listen, target } => format!("{listen} -> {target}"),
     }
 }
 
@@ -136,6 +140,8 @@ pub async fn persist_now(state: &AppState) -> anyhow::Result<()> {
 pub async fn list_sessions(state: &AppState) -> Result<Vec<SessionView>, AppError> {
     let runners = state.runners.read().await;
     let mut out = Vec::new();
+
+    // 1. 常规会话（从 mgr 中获取）
     for entry in state.mgr.list().await {
         let key = entry.name.to_ascii_lowercase();
         let status = entry.status.borrow().clone();
@@ -164,6 +170,23 @@ pub async fn list_sessions(state: &AppState) -> Result<Vec<SessionView>, AppErro
             client_count,
         });
     }
+
+    // 2. HTTP 代理会话（不在 mgr 中，只在 runners 中）
+    for (key, entry) in runners.iter() {
+        if state.mgr.get(key).await.is_some() {
+            continue;
+        }
+        out.push(SessionView {
+            name: entry.config.name.clone(),
+            status: SessionStatus::Running { uptime_secs: 0 },
+            upstream_kind: upstream_kind_label(&entry.config.upstream),
+            upstream_summary: upstream_summary(&entry.config.upstream),
+            upstream: entry.config.upstream.clone(),
+            auto_reconnect: entry.config.auto_reconnect,
+            client_count: 0,
+        });
+    }
+
     Ok(out)
 }
 
@@ -173,6 +196,37 @@ pub async fn create_session(
     cfg: SessionConfig,
 ) -> Result<(String, termhub_core::StatusRx), AppError> {
     let name = cfg.name.clone();
+
+    // HTTP 代理模式：不经过 Hub，直接启动 TCP 代理
+    if let UpstreamSpec::HttpProxy { listen, target } = &cfg.upstream {
+        let cancel = CancellationToken::new();
+        let listen = listen.clone();
+        let target = target.clone();
+        let proxy_cancel = cancel.clone();
+        tokio::spawn(async move {
+            if let Err(e) = run_http_proxy(&listen, &target, cancel).await {
+                tracing::error!(%listen, %target, "http proxy error: {e}");
+            }
+        });
+
+        // 为 HTTP 代理创建一个虚拟的 status channel
+        let (status_tx, status_rx) = termhub_core::session::status_channel();
+        let _ = status_tx; // 代理不需要更新状态
+
+        state.runners.write().await.insert(
+            name.to_ascii_lowercase(),
+            RunnerEntry {
+                started: None,
+                config: cfg,
+                proxy_cancel: Some(proxy_cancel),
+            },
+        );
+
+        persist_now(state).await?;
+        return Ok((name, status_rx));
+    }
+
+    // 常规会话模式：通过 Hub + UpstreamDriver
     let password = cfg.password.clone();
     let auto_rc = cfg.auto_reconnect;
     let pty = cfg.pty_override.clone();
@@ -203,8 +257,9 @@ pub async fn create_session(
     state.runners.write().await.insert(
         name.to_ascii_lowercase(),
         RunnerEntry {
-            started,
+            started: Some(started),
             config: cfg_for_runner,
+            proxy_cancel: None,
         },
     );
 
@@ -215,8 +270,17 @@ pub async fn create_session(
 pub async fn stop_session(state: &AppState, name: &str) -> Result<(), AppError> {
     let key = name.to_ascii_lowercase();
     if let Some(r) = state.runners.write().await.remove(&key) {
-        r.started.cancel.cancel();
-        let _ = r.started.handle.await;
+        // 取消常规会话
+        if let Some(ref started) = r.started {
+            started.cancel.cancel();
+        }
+        // 取消 HTTP 代理
+        if let Some(ref proxy_cancel) = r.proxy_cancel {
+            proxy_cancel.cancel();
+        }
+        if let Some(started) = r.started {
+            let _ = started.handle.await;
+        }
     }
     state.mgr.unregister(name).await;
     persist_now(state).await?;
@@ -237,29 +301,7 @@ pub async fn restart_session(state: &AppState, name: &str) -> Result<termhub_cor
         return Err(AppError::NotFound("no such session".into()));
     };
     stop_session(state, name).await?;
-    let spec = cfg.upstream.clone();
-    let factory: termhub_core::runner::DriverFactory =
-        Box::new(move || create_driver(&spec).expect("driver factory"));
-    let started = start_session(
-        state.mgr.clone(),
-        cfg.name.clone(),
-        cfg.password.clone(),
-        factory,
-        RunnerConfig {
-            auto_reconnect: cfg.auto_reconnect,
-            max_attempts: None,
-        },
-    )
-    .await?;
-
-    let status_rx = started.status_rx.clone();
-    state.runners.write().await.insert(
-        key,
-        RunnerEntry {
-            started,
-            config: cfg,
-        },
-    );
+    let (_, status_rx) = create_session(state, cfg).await?;
     Ok(status_rx)
 }
 
@@ -268,53 +310,20 @@ pub async fn update_session(
     old_name: &str,
     cfg: SessionConfig,
 ) -> Result<termhub_core::StatusRx, AppError> {
-    let old_key = old_name.to_ascii_lowercase();
-    let new_key = cfg.name.to_ascii_lowercase();
-
-    {
-        let mut runners = state.runners.write().await;
-        if let Some(r) = runners.remove(&old_key) {
-            r.started.cancel.cancel();
-            let _ = r.started.handle.await;
-        }
-    }
-    state.mgr.unregister(old_name).await;
-
-    let spec = cfg.upstream.clone();
-    let factory: termhub_core::runner::DriverFactory =
-        Box::new(move || create_driver(&spec).expect("driver factory"));
-    let started = start_session(
-        state.mgr.clone(),
-        cfg.name.clone(),
-        cfg.password.clone(),
-        factory,
-        RunnerConfig {
-            auto_reconnect: cfg.auto_reconnect,
-            max_attempts: None,
-        },
-    )
-    .await?;
-
-    let status_rx = started.status_rx.clone();
-    state.runners.write().await.insert(
-        new_key,
-        RunnerEntry {
-            started,
-            config: cfg,
-        },
-    );
-
-    persist_now(state).await?;
+    stop_session(state, old_name).await?;
+    let (_, status_rx) = create_session(state, cfg).await?;
     Ok(status_rx)
 }
 
 pub async fn list_clients(state: &AppState, name: &str) -> Result<Vec<ClientView>, AppError> {
-    let entry = state
-        .mgr
-        .get(name)
-        .await
-        .ok_or_else(|| AppError::NotFound("no such session".into()))?;
-    let v = entry.clients.list().await;
+    let entry = state.mgr.get(name).await;
+    let v = match entry {
+        Some(e) => e.clients.list().await,
+        None => {
+            // HTTP 代理会话不在 mgr 中，无下联
+            return Ok(Vec::new());
+        }
+    };
     Ok(v.into_iter()
         .map(|s: ClientRecordSnapshot| ClientView {
             id: s.id,
@@ -335,12 +344,14 @@ pub async fn kick_client(
     session: &str,
     client_id: u64,
 ) -> Result<bool, AppError> {
-    let entry = state
-        .mgr
-        .get(session)
-        .await
-        .ok_or_else(|| AppError::NotFound("no such session".into()))?;
-    Ok(entry.clients.kick(client_id).await)
+    let entry = state.mgr.get(session).await;
+    match entry {
+        Some(e) => Ok(e.clients.kick(client_id).await),
+        None => {
+            // HTTP 代理会话不在 mgr 中，无下联可踢
+            Ok(false)
+        }
+    }
 }
 
 pub async fn get_server_info(state: &AppState) -> Result<ServerInfo, AppError> {
