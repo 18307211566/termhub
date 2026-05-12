@@ -113,6 +113,17 @@ cargo build --workspace --release
 cargo build --workspace
 ```
 
+# 调试
+
+```bash
+# 设置环境变量  
+$env:Path = "$env:USERPROFILE\.cargo\bin;" + $env:Path  
+
+# 启动 termhub-app 
+cargo run -p termhub-app 
+```
+
+
 编译产物：
 
 | 二进制 | 路径 |
