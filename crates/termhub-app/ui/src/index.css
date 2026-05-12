@@ -1,1 +1,10 @@
 @import "tailwindcss";
+
+@layer components {
+  .btn-sm {
+    @apply rounded border border-slate-600 px-2 py-1 text-xs hover:bg-slate-800;
+  }
+  .input {
+    @apply rounded border border-slate-700 bg-slate-900 px-2 py-1.5 text-sm;
+  }
+}
