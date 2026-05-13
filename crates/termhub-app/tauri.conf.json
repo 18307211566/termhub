@@ -7,7 +7,7 @@
     "frontendDist": "ui/dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev --prefix ui",
-    "beforeBuildCommand": "cd termhub-app/ui && npm install && npm run build"
+    "beforeBuildCommand": ""
   },
   "app": {
     "security": {
@@ -27,7 +27,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi"],
+    "targets": ["msi", "nsis"],
     "icon": ["icons/icon.png", "icons/icon.ico"]
   }
 }
