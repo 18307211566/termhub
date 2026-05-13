@@ -181,7 +181,7 @@ enum UpstreamCmd {
         #[arg(long, num_args = 0..)]
         args: Vec<String>,
     },
-    /// HTTP reverse proxy (port forwarding)
+    /// Port forwarding (TCP/UDP)
     HttpProxy {
         /// Local listen address (e.g. 0.0.0.0:8080)
         #[arg(long)]
@@ -189,6 +189,9 @@ enum UpstreamCmd {
         /// Target address to forward to (e.g. 192.168.1.100:80)
         #[arg(long)]
         target: String,
+        /// Protocol: tcp or udp (default: tcp)
+        #[arg(long, default_value = "tcp")]
+        protocol: String,
     },
 }
 
@@ -378,9 +381,10 @@ fn upstream_to_spec(cmd: &UpstreamCmd) -> UpstreamSpec {
             command: command.clone(),
             args: args.clone(),
         },
-        UpstreamCmd::HttpProxy { listen, target } => UpstreamSpec::HttpProxy {
+        UpstreamCmd::HttpProxy { listen, target, protocol } => UpstreamSpec::HttpProxy {
             listen: listen.clone(),
             target: target.clone(),
+            protocol: protocol.clone(),
         },
     }
 }

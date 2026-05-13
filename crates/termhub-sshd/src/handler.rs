@@ -152,15 +152,20 @@ impl Handler for ClientHandler {
     type Error = russh::Error;
 
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
+        tracing::debug!(%user, "ssh auth attempt");
         match self.mgr.authenticate(user, password).await {
             Some(entry) => {
+                tracing::info!(%user, "ssh auth accepted");
                 self.user = Some(user.to_string());
                 self.entry = Some(entry);
                 Ok(Auth::Accept)
             }
-            None => Ok(Auth::Reject {
-                proceed_with_methods: None,
-            }),
+            None => {
+                tracing::warn!(%user, "ssh auth rejected: wrong user or password");
+                Ok(Auth::Reject {
+                    proceed_with_methods: None,
+                })
+            },
         }
     }
 

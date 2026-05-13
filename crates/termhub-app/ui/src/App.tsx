@@ -95,7 +95,7 @@ function defaultUpstream(kind: UpKind): UpstreamSpec {
     case "local_shell":
       return { type: "local_shell", command: "cmd.exe", args: ["/c", "echo hello"] };
     case "http_proxy":
-      return { type: "http_proxy", listen: "0.0.0.0:8080", target: "127.0.0.1:80" };
+      return { type: "http_proxy", listen: "0.0.0.0:8080", target: "127.0.0.1:80", protocol: "tcp" };
   }
 }
 
@@ -114,7 +114,7 @@ function upstreamLabel(spec: UpstreamSpec): string {
     case "local_shell":
       return spec.command;
     case "http_proxy":
-      return `${spec.listen} → ${spec.target}`;
+      return `${spec.listen} → ${spec.target} (${spec.protocol.toUpperCase()})`;
   }
 }
 
@@ -147,73 +147,128 @@ function UpstreamFields({
   if (upstream.type === "ssh") {
     return (
       <div className="grid grid-cols-2 gap-2">
-        <input className="input" placeholder="主机" value={upstream.host} onChange={(e) => setUpstream({ ...upstream, host: e.target.value })} />
-        <input className="input" type="number" placeholder="端口" value={upstream.port} onChange={(e) => setUpstream({ ...upstream, port: Number(e.target.value) || 22 })} />
-        <input className="input" placeholder="用户" value={upstream.user} onChange={(e) => setUpstream({ ...upstream, user: e.target.value })} />
-        <input className="input" type="password" placeholder="密码" value={upstream.password} onChange={(e) => setUpstream({ ...upstream, password: e.target.value })} />
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">主机</label>
+          <input className="input w-full" value={upstream.host} onChange={(e) => setUpstream({ ...upstream, host: e.target.value })} />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">端口</label>
+          <input className="input w-full" type="number" value={upstream.port} onChange={(e) => setUpstream({ ...upstream, port: Number(e.target.value) || 22 })} />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">用户</label>
+          <input className="input w-full" value={upstream.user} onChange={(e) => setUpstream({ ...upstream, user: e.target.value })} />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">密码</label>
+          <input className="input w-full" type="password" value={upstream.password} onChange={(e) => setUpstream({ ...upstream, password: e.target.value })} />
+        </div>
       </div>
     );
   }
   if (upstream.type === "telnet" || upstream.type === "raw_tcp") {
     return (
       <div className="grid grid-cols-2 gap-2">
-        <input className="input" placeholder="主机" value={upstream.host} onChange={(e) => setUpstream({ ...upstream, host: e.target.value })} />
-        <input className="input" type="number" placeholder="端口" value={upstream.port} onChange={(e) => setUpstream({ ...upstream, port: Number(e.target.value) || 0 })} />
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">主机</label>
+          <input className="input w-full" value={upstream.host} onChange={(e) => setUpstream({ ...upstream, host: e.target.value })} />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">端口</label>
+          <input className="input w-full" type="number" value={upstream.port} onChange={(e) => setUpstream({ ...upstream, port: Number(e.target.value) || 0 })} />
+        </div>
       </div>
     );
   }
   if (upstream.type === "serial") {
     return (
       <div className="grid grid-cols-3 gap-2">
-        <select className="input" value={upstream.port} onChange={(e) => setUpstream({ ...upstream, port: e.target.value })}>
-          {serialPorts.length === 0 && <option value="">暂无串口</option>}
-          {serialPorts.map((p) => (
-            <option key={p} value={p}>{p}</option>
-          ))}
-        </select>
-        <select className="input" value={upstream.baud} onChange={(e) => setUpstream({ ...upstream, baud: Number(e.target.value) })}>
-          {[9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600].map((b) => (
-            <option key={b} value={b}>{b}</option>
-          ))}
-        </select>
-        <select className="input" value={upstream.data_bits} onChange={(e) => setUpstream({ ...upstream, data_bits: Number(e.target.value) as 5|6|7|8 })}>
-          {[5, 6, 7, 8].map((b) => <option key={b} value={b}>{b}</option>)}
-        </select>
-        <select className="input" value={upstream.parity} onChange={(e) => setUpstream({ ...upstream, parity: e.target.value })}>
-          <option value="none">None</option>
-          <option value="even">Even</option>
-          <option value="odd">Odd</option>
-        </select>
-        <select className="input" value={upstream.stop_bits} onChange={(e) => setUpstream({ ...upstream, stop_bits: Number(e.target.value) as 1|2 })}>
-          <option value={1}>1</option>
-          <option value={2}>2</option>
-        </select>
-        <select className="input" value={upstream.flow} onChange={(e) => setUpstream({ ...upstream, flow: e.target.value })}>
-          <option value="none">None</option>
-          <option value="hardware">Hardware</option>
-          <option value="software">Software</option>
-        </select>
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">串口</label>
+          <select className="input w-full" value={upstream.port} onChange={(e) => setUpstream({ ...upstream, port: e.target.value })}>
+            {serialPorts.length === 0 && <option value="">暂无串口</option>}
+            {serialPorts.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">波特率</label>
+          <select className="input w-full" value={upstream.baud} onChange={(e) => setUpstream({ ...upstream, baud: Number(e.target.value) })}>
+            {[9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600].map((b) => (
+              <option key={b} value={b}>{b}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">数据位</label>
+          <select className="input w-full" value={upstream.data_bits} onChange={(e) => setUpstream({ ...upstream, data_bits: Number(e.target.value) as 5|6|7|8 })}>
+            {[5, 6, 7, 8].map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">校验</label>
+          <select className="input w-full" value={upstream.parity} onChange={(e) => setUpstream({ ...upstream, parity: e.target.value })}>
+            <option value="none">None</option>
+            <option value="even">Even</option>
+            <option value="odd">Odd</option>
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">停止位</label>
+          <select className="input w-full" value={upstream.stop_bits} onChange={(e) => setUpstream({ ...upstream, stop_bits: Number(e.target.value) as 1|2 })}>
+            <option value="1">1</option>
+            <option value="2">2</option>
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">流控</label>
+          <select className="input w-full" value={upstream.flow} onChange={(e) => setUpstream({ ...upstream, flow: e.target.value })}>
+            <option value="none">None</option>
+            <option value="hardware">Hardware</option>
+            <option value="software">Software</option>
+          </select>
+        </div>
       </div>
     );
   }
   if (upstream.type === "local_shell") {
     return (
       <div className="flex flex-col gap-2">
-        <input className="input" placeholder="命令" value={upstream.command} onChange={(e) => setUpstream({ ...upstream, command: e.target.value })} />
-        <textarea className="input font-mono text-xs" rows={3} placeholder="参数（每行一项）" value={shellArgsText} onChange={(e) => {
-          const t = e.target.value;
-          setShellArgsText(t);
-          const args = t.split(/\r?\n/).filter(Boolean);
-          setUpstream((prev) => prev.type === "local_shell" ? { ...prev, args } : prev);
-        }} />
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">命令</label>
+          <input className="input w-full" value={upstream.command} onChange={(e) => setUpstream({ ...upstream, command: e.target.value })} />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">参数（每行一项）</label>
+          <textarea className="input font-mono text-xs w-full" rows={3} value={shellArgsText} onChange={(e) => {
+            const t = e.target.value;
+            setShellArgsText(t);
+            const args = t.split(/\r?\n/).filter(Boolean);
+            setUpstream((prev) => prev.type === "local_shell" ? { ...prev, args } : prev);
+          }} />
+        </div>
       </div>
     );
   }
   if (upstream.type === "http_proxy") {
     return (
-      <div className="grid grid-cols-2 gap-2">
-        <input className="input" placeholder="监听地址" value={upstream.listen} onChange={(e) => setUpstream({ ...upstream, listen: e.target.value })} />
-        <input className="input" placeholder="目标地址" value={upstream.target} onChange={(e) => setUpstream({ ...upstream, target: e.target.value })} />
+      <div className="grid grid-cols-3 gap-2">
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">监听地址</label>
+          <input className="input w-full" value={upstream.listen} onChange={(e) => setUpstream({ ...upstream, listen: e.target.value })} />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">目标地址</label>
+          <input className="input w-full" value={upstream.target} onChange={(e) => setUpstream({ ...upstream, target: e.target.value })} />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">协议</label>
+          <select className="input w-full" value={upstream.protocol} onChange={(e) => setUpstream({ ...upstream, protocol: e.target.value })}>
+            <option value="tcp">TCP</option>
+            <option value="udp">UDP</option>
+          </select>
+        </div>
       </div>
     );
   }
@@ -232,13 +287,13 @@ export default function App() {
   // 新建会话弹窗
   const [showNew, setShowNew] = useState(false);
   const [newName, setNewName] = useState("");
-  const [newPassword, setNewPassword] = useState("pass");
+  const [newPassword, setNewPassword] = useState("admin");
   const [newSshUser, setNewSshUser] = useState("admin");
   const [newListen, setNewListen] = useState("0.0.0.0:2222");
   const [newAutoRc, setNewAutoRc] = useState(true);
   const [newPtyOverride, setNewPtyOverride] = useState<{ cols: number; rows: number } | null>(null);
-  const [upKind, setUpKind] = useState<UpKind>("loopback");
-  const [upstream, setUpstream] = useState<UpstreamSpec>(() => defaultUpstream("loopback"));
+  const [upKind, setUpKind] = useState<UpKind>("ssh");
+  const [upstream, setUpstream] = useState<UpstreamSpec>(() => defaultUpstream("ssh"));
   const [shellArgsText, setShellArgsText] = useState("/c\necho hello");
   const [serialPorts, setSerialPorts] = useState<string[]>([]);
 
@@ -248,8 +303,8 @@ export default function App() {
   const [editListen, setEditListen] = useState("0.0.0.0:2222");
   const [editPassword, setEditPassword] = useState("");
   const [editAutoRc, setEditAutoRc] = useState(true);
-  const [editUpKind, setEditUpKind] = useState<UpKind>("loopback");
-  const [editUpstream, setEditUpstream] = useState<UpstreamSpec>({ type: "loopback" });
+  const [editUpKind, setEditUpKind] = useState<UpKind>("ssh");
+  const [editUpstream, setEditUpstream] = useState<UpstreamSpec>(defaultUpstream("ssh"));
   const [editShellArgsText, setEditShellArgsText] = useState("/c\necho hello");
 
   const selected = useMemo(
@@ -293,6 +348,9 @@ export default function App() {
     void refreshServer();
     void getAutostart().then(setAutoStartState).catch(() => {});
     void invoke<string[]>("list_serial_ports").then(setSerialPorts).catch(() => {});
+    // 每秒刷新会话列表（确保运行时间实时更新）
+    const interval = setInterval(() => void refreshSessions(), 1000);
+    return () => clearInterval(interval);
   }, [refreshSessions, refreshServer]);
 
   useEffect(() => {
@@ -341,8 +399,9 @@ export default function App() {
     setEditListen(selected.listen);
     setEditPassword("");
     setEditAutoRc(selected.auto_reconnect);
-    setEditUpKind(kindToUpKind(selected.upstream_kind));
-    setEditUpstream(selected.upstream);
+    const k = kindToUpKind(selected.upstream_kind);
+    setEditUpKind(k === "loopback" ? "ssh" : k);
+    setEditUpstream(selected.upstream.type === "loopback" ? defaultUpstream("ssh") : selected.upstream);
     if (selected.upstream.type === "local_shell") {
       setEditShellArgsText(selected.upstream.args.join("\n"));
     } else {
@@ -478,9 +537,9 @@ export default function App() {
               className="w-full rounded-lg bg-emerald-600 py-2 text-sm font-medium text-white hover:bg-emerald-500"
               onClick={() => {
                 setShowNew(true);
-                setUpKind("loopback");
+                setUpKind("ssh");
                 setNewName("");
-                setNewPassword("pass");
+                setNewPassword("admin");
                 setNewSshUser("admin");
                 setNewListen("0.0.0.0:2222");
               }}
@@ -522,7 +581,8 @@ export default function App() {
                 </div>
               </div>
 
-              {/* SSH 接入信息 */}
+              {/* SSH 接入信息（HTTP代理不显示） */}
+              {selected.upstream_kind !== "http_proxy" && (
               <div className="rounded-lg border border-slate-800 bg-slate-900/50 p-3">
                 <div className="mb-2 text-xs text-slate-500">SSH 接入</div>
                 <code className="rounded bg-slate-800 px-2 py-1 text-sm text-cyan-300">
@@ -530,6 +590,7 @@ export default function App() {
                 </code>
                 <div className="mt-2 text-xs text-slate-500">用户: {selected.ssh_user} · 密码: ***</div>
               </div>
+              )}
 
               {/* 下联列表 */}
               <div className="flex-1 overflow-auto rounded-lg border border-slate-800 bg-slate-900/50">
@@ -580,19 +641,29 @@ export default function App() {
           <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
             <h3 className="mb-4 text-lg font-medium text-white">新建会话</h3>
             <form className="flex flex-1 flex-col gap-3 overflow-auto" onSubmit={(e) => void submitNew(e)}>
+              <div>
+                <label className="mb-1 block text-xs text-slate-500">会话名称</label>
+                <input className="input w-full" required value={newName} onChange={(e) => setNewName(e.target.value)} />
+              </div>
               <div className="grid grid-cols-2 gap-2">
-                <input className="input" required placeholder="名称" value={newName} onChange={(e) => setNewName(e.target.value)} />
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">SSH 用户名</label>
+                  <input className="input w-full" value={newSshUser} onChange={(e) => setNewSshUser(e.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">SSH 监听地址</label>
+                  <input className="input w-full" value={newListen} onChange={(e) => setNewListen(e.target.value)} />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-slate-500">SSH 密码</label>
                 <div className="flex gap-1">
-                  <input className="input flex-1" placeholder="SSH 密码" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+                  <input className="input flex-1" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
                   <button type="button" className="btn-sm" onClick={() => {
                     const chars = "abcdefghijkmnpqrstuvwxyz23456789";
                     setNewPassword(Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join(""));
                   }}>随机</button>
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <input className="input" placeholder="SSH 用户名" value={newSshUser} onChange={(e) => setNewSshUser(e.target.value)} />
-                <input className="input" placeholder="SSH 监听地址" value={newListen} onChange={(e) => setNewListen(e.target.value)} />
               </div>
               <div className="flex gap-3 text-sm">
                 <label className="flex items-center gap-1 text-slate-300">
@@ -609,15 +680,17 @@ export default function App() {
                   </div>
                 )}
               </div>
-              <select className="input" value={upKind} onChange={(e) => setUpKind(e.target.value as UpKind)}>
-                <option value="loopback">loopback（环回测试）</option>
-                <option value="ssh">SSH 客户端</option>
-                <option value="telnet">Telnet</option>
-                <option value="raw_tcp">原始 TCP</option>
-                <option value="serial">串口</option>
-                <option value="local_shell">本地 Shell</option>
-                <option value="http_proxy">HTTP 代理（端口转发）</option>
-              </select>
+              <div>
+                <label className="mb-1 block text-xs text-slate-500">上游类型</label>
+                <select className="input w-full" value={upKind} onChange={(e) => setUpKind(e.target.value as UpKind)}>
+                  <option value="ssh">SSH 客户端</option>
+                  <option value="telnet">Telnet</option>
+                  <option value="raw_tcp">原始 TCP</option>
+                  <option value="serial">串口</option>
+                  <option value="local_shell">本地 Shell</option>
+                  <option value="http_proxy">端口转发</option>
+                </select>
+              </div>
               <UpstreamFields
                 upstream={upstream}
                 setUpstream={setUpstream}
@@ -671,13 +744,12 @@ export default function App() {
                   setEditUpstream(defaultUpstream(k));
                   setEditShellArgsText("/c\necho hello");
                 }}>
-                  <option value="loopback">loopback（环回测试）</option>
                   <option value="ssh">SSH 客户端</option>
                   <option value="telnet">Telnet</option>
                   <option value="raw_tcp">原始 TCP</option>
                   <option value="serial">串口</option>
                   <option value="local_shell">本地 Shell</option>
-                  <option value="http_proxy">HTTP 代理（端口转发）</option>
+                  <option value="http_proxy">端口转发</option>
                 </select>
               </div>
               <UpstreamFields

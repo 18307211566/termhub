@@ -89,7 +89,9 @@ impl UpstreamDriver for LocalShellDriver {
                             let w = Arc::clone(&writer);
                             let res = tokio::task::spawn_blocking(move || {
                                 use std::io::Write;
-                                w.lock().unwrap().write_all(&b)
+                                let mut guard = w.lock().unwrap();
+                                guard.write_all(&b)?;
+                                guard.flush()
                             })
                             .await;
                             if matches!(res, Err(_) | Ok(Err(_))) {

@@ -55,34 +55,23 @@ async fn main() -> anyhow::Result<()> {
 
     let mut runners_map: HashMap<String, RunnerEntry> = HashMap::new();
 
-    let mut sessions_to_start = stored.sessions.clone();
-    if !sessions_to_start
-        .iter()
-        .any(|s| s.name.eq_ignore_ascii_case("echo"))
-    {
-        sessions_to_start.insert(
-            0,
-            SessionConfig {
-                name: "echo".into(),
-                password: "pass".into(),
-                ssh_user: "admin".into(),
-                listen: "0.0.0.0:2222".into(),
-                auto_reconnect: false,
-                pty_override: None,
-                upstream: UpstreamSpec::Loopback,
-            },
-        );
-    }
+    let sessions_to_start = stored.sessions.clone();
 
     for s in sessions_to_start {
-        if let UpstreamSpec::HttpProxy { ref listen, ref target } = s.upstream {
+        if let UpstreamSpec::HttpProxy { ref listen, ref target, ref protocol } = s.upstream {
             let cancel = tokio_util::sync::CancellationToken::new();
             let listen = listen.clone();
             let target = target.clone();
+            let protocol = protocol.clone();
             let proxy_cancel = cancel.clone();
             tokio::spawn(async move {
-                if let Err(e) = termhub_drivers::http_proxy::run_http_proxy(&listen, &target, cancel).await {
-                    tracing::error!(%listen, %target, "http proxy error: {e}");
+                let res = if protocol == "udp" {
+                    termhub_drivers::http_proxy::run_udp_forward(&listen, &target, cancel).await
+                } else {
+                    termhub_drivers::http_proxy::run_tcp_forward(&listen, &target, cancel).await
+                };
+                if let Err(e) = res {
+                    tracing::error!(%listen, %target, "port forward error: {e}");
                 }
             });
             runners_map.insert(

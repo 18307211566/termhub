@@ -7,7 +7,7 @@ use termhub_core::{
     UpstreamSpec,
 };
 use termhub_drivers::factory::create_driver;
-use termhub_drivers::http_proxy::run_http_proxy;
+use termhub_drivers::http_proxy::{run_tcp_forward, run_udp_forward};
 use tokio_util::sync::CancellationToken;
 
 use crate::state::{AppState, RunnerEntry};
@@ -110,7 +110,7 @@ pub fn upstream_summary(s: &UpstreamSpec) -> String {
         UpstreamSpec::Telnet { host, port } => format!("{host}:{port} (telnet)"),
         UpstreamSpec::RawTcp { host, port } => format!("{host}:{port} (raw)"),
         UpstreamSpec::LocalShell { command, .. } => command.clone(),
-        UpstreamSpec::HttpProxy { listen, target } => format!("{listen} -> {target}"),
+        UpstreamSpec::HttpProxy { listen, target, protocol } => format!("{listen} -> {target} ({protocol})"),
     }
 }
 
@@ -185,15 +185,21 @@ pub async fn create_session(
 ) -> Result<(String, termhub_core::StatusRx), AppError> {
     let name = cfg.name.clone();
 
-    // HTTP 代理模式：不经过 Hub，直接启动 TCP 代理
-    if let UpstreamSpec::HttpProxy { listen, target } = &cfg.upstream {
+    // 端口转发模式：不经过 Hub，直接启动 TCP/UDP 转发
+    if let UpstreamSpec::HttpProxy { listen, target, protocol } = &cfg.upstream {
         let cancel = CancellationToken::new();
         let listen = listen.clone();
         let target = target.clone();
+        let protocol = protocol.clone();
         let proxy_cancel = cancel.clone();
         tokio::spawn(async move {
-            if let Err(e) = run_http_proxy(&listen, &target, cancel).await {
-                tracing::error!(%listen, %target, "http proxy error: {e}");
+            let res = if protocol == "udp" {
+                run_udp_forward(&listen, &target, cancel).await
+            } else {
+                run_tcp_forward(&listen, &target, cancel).await
+            };
+            if let Err(e) = res {
+                tracing::error!(%listen, %target, "port forward error: {e}");
             }
         });
 
@@ -350,8 +356,15 @@ pub async fn restart_session(state: &AppState, name: &str) -> Result<termhub_cor
 pub async fn update_session(
     state: &AppState,
     old_name: &str,
-    cfg: SessionConfig,
+    mut cfg: SessionConfig,
 ) -> Result<termhub_core::StatusRx, AppError> {
+    // 密码为空时保留原密码
+    if cfg.password.is_empty() {
+        let runners = state.runners.read().await;
+        if let Some(r) = runners.get(&old_name.to_ascii_lowercase()) {
+            cfg.password = r.config.password.clone();
+        }
+    }
     stop_session(state, old_name).await?;
     let (_, status_rx) = create_session(state, cfg).await?;
     Ok(status_rx)

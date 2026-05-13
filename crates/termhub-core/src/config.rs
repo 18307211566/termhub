@@ -115,10 +115,12 @@ pub enum UpstreamSpec {
         #[serde(default)]
         args: Vec<String>,
     },
-    /// HTTP 反向代理：监听 listen，将 HTTP 请求转发到 target
+    /// 端口转发：监听 listen，将连接转发到 target（支持 TCP/UDP）
     HttpProxy {
         listen: String,
         target: String,
+        #[serde(default = "default_protocol")]
+        protocol: String,
     },
 }
 
@@ -136,4 +138,7 @@ fn default_flow() -> String {
 }
 fn default_eol() -> String {
     "as_is".into()
+}
+fn default_protocol() -> String {
+    "tcp".into()
 }

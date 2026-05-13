@@ -35,8 +35,8 @@ export async function listClients(name: string): Promise<ClientView[]> {
   return invoke("list_clients", { name });
 }
 
-export async function kickClient(session: string, client_id: number): Promise<boolean> {
-  return invoke("kick_client", { session, client_id });
+export async function kickClient(session: string, clientId: number): Promise<boolean> {
+  return invoke("kick_client", { session, clientId });
 }
 
 export async function getServerInfo(): Promise<ServerInfo> {
