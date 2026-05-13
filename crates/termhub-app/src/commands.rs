@@ -134,3 +134,8 @@ pub async fn get_server_info(
 pub fn list_serial_ports() -> Result<Vec<String>, String> {
     app_logic::list_serial_ports().map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn exit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}

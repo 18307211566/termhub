@@ -50,3 +50,7 @@ export async function getAutostart(): Promise<boolean> {
 export async function setAutostart(enable: boolean): Promise<void> {
   return invoke("set_autostart", { enable });
 }
+
+export async function exitApp(): Promise<void> {
+  return invoke("exit_app");
+}

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use tauri::Manager;
 
 use commands::{
-    create_session, delete_session, get_server_info, kick_client, list_clients, list_serial_ports,
+    create_session, delete_session, exit_app, get_server_info, kick_client, list_clients, list_serial_ports,
     list_sessions, restart_session, spawn_session_status_listener, stop_session, update_session,
 };
 use commands_settings::{get_autostart, set_autostart};
@@ -237,6 +237,12 @@ async fn main() -> anyhow::Result<()> {
     let runners_for_status = app_state.runners.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -255,6 +261,7 @@ async fn main() -> anyhow::Result<()> {
             get_server_info,
             get_autostart,
             set_autostart,
+            exit_app,
         ])
         .setup(move |app| {
             let app_h = app.handle().clone();

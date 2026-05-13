@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type React from "react";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -7,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   createSession,
   deleteSession,
+  exitApp,
   getAutostart,
   getServerInfo,
   kickClient,
@@ -352,6 +354,28 @@ export default function App() {
     const interval = setInterval(() => void refreshSessions(), 1000);
     return () => clearInterval(interval);
   }, [refreshSessions, refreshServer]);
+
+  // 关闭窗口确认：直接退出 or 收到托盘
+  useEffect(() => {
+    const win = getCurrentWindow();
+    let unlisten: (() => void) | undefined;
+
+    win.onCloseRequested(async (event) => {
+      event.preventDefault();
+      const shouldQuit = window.confirm("直接退出程序，还是收到系统托盘中？\n\n[确定] = 直接退出\n[取消] = 收到托盘");
+      if (shouldQuit) {
+        await exitApp();
+      } else {
+        await win.hide();
+      }
+    }).then((fn) => {
+      unlisten = fn;
+    }).catch(() => {});
+
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     setUpstream(defaultUpstream(upKind));
