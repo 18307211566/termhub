@@ -16,7 +16,8 @@ pub struct StartedSession {
 
 pub async fn start_session(
     mgr: Arc<SessionMgr>,
-    name: String,
+    _name: String,
+    ssh_user: String,
     password: String,
     factory: DriverFactory,
     cfg: RunnerConfig,
@@ -26,7 +27,7 @@ pub async fn start_session(
     let cancel = CancellationToken::new();
 
     mgr.register(
-        name,
+        ssh_user,
         password,
         hub.handle(),
         status_rx.clone(),

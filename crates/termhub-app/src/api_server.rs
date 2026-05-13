@@ -140,20 +140,6 @@ async fn get_server_info(
         .map_err(map_err)
 }
 
-async fn set_listen_addr(
-    AxumState(state): AxumState<AppState>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<Json<ApiResponse<()>>, (StatusCode, Json<ApiResponse<()>>)> {
-    let addr = body
-        .get("addr")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| err(StatusCode::BAD_REQUEST, "missing 'addr' field".into()))?;
-    app_logic::set_listen_addr(&state, addr)
-        .await
-        .map(ok)
-        .map_err(map_err)
-}
-
 async fn list_serial_ports() -> Result<Json<ApiResponse<Vec<String>>>, (StatusCode, Json<ApiResponse<()>>)> {
     app_logic::list_serial_ports().map(ok).map_err(map_err)
 }
@@ -177,7 +163,6 @@ pub fn api_router(state: AppState) -> Router {
             post(kick_client),
         )
         .route("/api/server", get(get_server_info))
-        .route("/api/server/listen", put(set_listen_addr))
         .route("/api/serial-ports", get(list_serial_ports))
         .with_state(state)
 }

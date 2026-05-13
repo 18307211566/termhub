@@ -36,6 +36,8 @@ export type UpstreamSpec =
 export interface SessionConfig {
   name: string;
   password: string;
+  ssh_user: string;
+  listen: string;
   auto_reconnect: boolean;
   pty_override: { cols: number; rows: number } | null;
   upstream: UpstreamSpec;
@@ -43,6 +45,8 @@ export interface SessionConfig {
 
 export interface SessionView {
   name: string;
+  ssh_user: string;
+  listen: string;
   status: SessionStatus;
   upstream_kind: string;
   upstream_summary: string;
@@ -60,7 +64,6 @@ export interface ClientView {
 }
 
 export interface ServerInfo {
-  listen: string;
   host_key_fpr: string;
 }
 

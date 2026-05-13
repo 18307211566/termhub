@@ -8,7 +8,6 @@ mod hostkey;
 mod state;
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use tauri::Manager;
 
@@ -16,13 +15,12 @@ use commands::{
     create_session, delete_session, get_server_info, kick_client, list_clients, list_serial_ports,
     list_sessions, restart_session, spawn_session_status_listener, stop_session, update_session,
 };
-use commands_settings::{get_autostart, set_autostart, set_listen_addr};
+use commands_settings::{get_autostart, set_autostart};
 use state::{AppState, RunnerEntry};
 use termhub_core::{
     start_session, RunnerConfig, SessionConfig, SessionMgr, UpstreamSpec,
 };
 use termhub_drivers::factory::create_driver;
-use termhub_sshd::{start as sshd_start, ServerConfig as SshdConfig};
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 #[tokio::main]
@@ -55,8 +53,6 @@ async fn main() -> anyhow::Result<()> {
     let fpr = hostkey::fingerprint(&host_keys[0])?;
     tracing::info!(fingerprint=%fpr, "host keys ready ({} keys)", host_keys.len());
 
-    let mgr = Arc::new(SessionMgr::new());
-
     let mut runners_map: HashMap<String, RunnerEntry> = HashMap::new();
 
     let mut sessions_to_start = stored.sessions.clone();
@@ -69,6 +65,8 @@ async fn main() -> anyhow::Result<()> {
             SessionConfig {
                 name: "echo".into(),
                 password: "pass".into(),
+                ssh_user: "admin".into(),
+                listen: "0.0.0.0:2222".into(),
                 auto_reconnect: false,
                 pty_override: None,
                 upstream: UpstreamSpec::Loopback,
@@ -78,7 +76,6 @@ async fn main() -> anyhow::Result<()> {
 
     for s in sessions_to_start {
         if let UpstreamSpec::HttpProxy { ref listen, ref target } = s.upstream {
-            // HTTP 代理模式：不经过 Hub，直接启动 TCP 代理
             let cancel = tokio_util::sync::CancellationToken::new();
             let listen = listen.clone();
             let target = target.clone();
@@ -94,15 +91,21 @@ async fn main() -> anyhow::Result<()> {
                     started: None,
                     config: s,
                     proxy_cancel: Some(proxy_cancel),
+                    sshd_cancel: None,
+                    sshd_handle: None,
+                    session_mgr: None,
                 },
             );
         } else {
+            // 创建独立的 SessionMgr（每会话一个）
+            let session_mgr = std::sync::Arc::new(SessionMgr::new());
             let spec = s.upstream.clone();
             let factory: termhub_core::runner::DriverFactory =
                 Box::new(move || create_driver(&spec).expect("driver factory"));
             let started = start_session(
-                mgr.clone(),
+                session_mgr.clone(),
                 s.name.clone(),
+                s.ssh_user.clone(),
                 s.password.clone(),
                 factory,
                 RunnerConfig {
@@ -111,12 +114,30 @@ async fn main() -> anyhow::Result<()> {
                 },
             )
             .await?;
+
+            // 为该会话启动独立的 SSH server
+            let sshd_cancel = tokio_util::sync::CancellationToken::new();
+            let sshd_cfg = termhub_sshd::ServerConfig {
+                listen: s.listen.clone(),
+                host_keys: host_keys.clone(),
+                max_clients_per_session: stored.server.max_clients_per_session,
+            };
+            let (sshd_handle, _sshd_addr) = termhub_sshd::start(
+                sshd_cfg,
+                session_mgr.clone(),
+                sshd_cancel.clone(),
+            )
+            .await?;
+
             runners_map.insert(
                 s.name.to_ascii_lowercase(),
                 RunnerEntry {
                     started: Some(started),
                     config: s,
                     proxy_cancel: None,
+                    sshd_cancel: Some(sshd_cancel),
+                    sshd_handle: Some(sshd_handle),
+                    session_mgr: Some(session_mgr),
                 },
             );
         }
@@ -140,16 +161,20 @@ async fn main() -> anyhow::Result<()> {
         let cfg = SessionConfig {
             name: "com".into(),
             password: "pass".into(),
+            ssh_user: "admin".into(),
+            listen: "0.0.0.0:2223".into(),
             auto_reconnect: true,
             pty_override: None,
             upstream: spec.clone(),
         };
+        let session_mgr = std::sync::Arc::new(SessionMgr::new());
         let spec2 = spec.clone();
         let factory: termhub_core::runner::DriverFactory =
             Box::new(move || create_driver(&spec2).expect("driver factory"));
         let started = start_session(
-            mgr.clone(),
+            session_mgr.clone(),
             cfg.name.clone(),
+            cfg.ssh_user.clone(),
             cfg.password.clone(),
             factory,
             RunnerConfig {
@@ -158,31 +183,38 @@ async fn main() -> anyhow::Result<()> {
             },
         )
         .await?;
-        runners_map.insert(cfg.name.to_ascii_lowercase(), RunnerEntry { started: Some(started), config: cfg, proxy_cancel: None });
+
+        let sshd_cancel = tokio_util::sync::CancellationToken::new();
+        let sshd_cfg = termhub_sshd::ServerConfig {
+            listen: cfg.listen.clone(),
+            host_keys: host_keys.clone(),
+            max_clients_per_session: stored.server.max_clients_per_session,
+        };
+        let (sshd_handle, _sshd_addr) = termhub_sshd::start(
+            sshd_cfg,
+            session_mgr.clone(),
+            sshd_cancel.clone(),
+        )
+        .await?;
+
+        runners_map.insert(
+            cfg.name.to_ascii_lowercase(),
+            RunnerEntry {
+                started: Some(started),
+                config: cfg,
+                proxy_cancel: None,
+                sshd_cancel: Some(sshd_cancel),
+                sshd_handle: Some(sshd_handle),
+                session_mgr: Some(session_mgr),
+            },
+        );
     }
 
-    let sshd_cancel = tokio_util::sync::CancellationToken::new();
-    let host_keys_clone = host_keys.clone();
-    let (sshd_handle, addr) = sshd_start(
-        SshdConfig {
-            listen: stored.server.listen.clone(),
-            host_keys: host_keys_clone,
-            max_clients_per_session: stored.server.max_clients_per_session,
-        },
-        mgr.clone(),
-        sshd_cancel.clone(),
-    )
-    .await?;
-
     let app_state = AppState::new(
-        mgr.clone(),
-        addr,
+        host_keys,
         fpr,
         cfg_dir,
         stored.server.max_clients_per_session,
-        sshd_cancel,
-        sshd_handle,
-        host_keys,
         stored.server.api_listen.clone(),
     );
     {
@@ -192,11 +224,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let first_listen = app_state.server_listen_addr.read().await.to_string();
-    tracing::info!(
-        "sshd on {first_listen}, example: ssh echo@127.0.0.1 -p {} (password: pass)",
-        addr.port()
-    );
+    tracing::info!("sessions ready");
 
     // Start HTTP API server for CLI access
     {
@@ -236,7 +264,6 @@ async fn main() -> anyhow::Result<()> {
             kick_client,
             list_serial_ports,
             get_server_info,
-            set_listen_addr,
             get_autostart,
             set_autostart,
         ])

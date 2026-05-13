@@ -56,8 +56,27 @@ async fn run_loop(
     let start_time = Instant::now();
     let backoff = Arc::new(std::sync::Mutex::new(Backoff::default()));
 
+    // 定期更新 Running 状态的运行时间
+    let uptime_status = status.clone();
+    let uptime_cancel = cancel.clone();
+    let uptime_start = start_time;
+    let uptime_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        loop {
+            tokio::select! {
+                _ = uptime_cancel.cancelled() => break,
+                _ = interval.tick() => {
+                    let _ = uptime_status.send(SessionStatus::Running {
+                        uptime_secs: uptime_start.elapsed().as_secs(),
+                    });
+                }
+            }
+        }
+    });
+
     loop {
         if cancel.is_cancelled() {
+            uptime_task.abort();
             let _ = status.send(SessionStatus::Stopped);
             break;
         }
@@ -134,15 +153,18 @@ async fn run_loop(
 
         match driver_res {
             Ok(()) => {
+                uptime_task.abort();
                 let _ = status.send(SessionStatus::Stopped);
                 break;
             }
             Err(DriverError::Fatal(reason)) => {
+                uptime_task.abort();
                 let _ = status.send(SessionStatus::Failed { reason });
                 break;
             }
             Err(DriverError::IoLost(reason)) => {
                 if !cfg.auto_reconnect {
+                    uptime_task.abort();
                     let _ = status.send(SessionStatus::Stopped);
                     let _ = reason;
                     break;
@@ -159,6 +181,7 @@ async fn run_loop(
                 let _ = status.send(SessionStatus::Reconnecting { attempt });
                 if let Some(max) = cfg.max_attempts {
                     if attempt > max {
+                        uptime_task.abort();
                         let _ = status.send(SessionStatus::Failed {
                             reason: format!("max retries exceeded ({reason})"),
                         });
@@ -167,6 +190,7 @@ async fn run_loop(
                 }
                 tokio::select! {
                     _ = cancel.cancelled() => {
+                        uptime_task.abort();
                         let _ = status.send(SessionStatus::Stopped);
                         break;
                     }

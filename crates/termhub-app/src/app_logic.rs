@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use serde::Serialize;
@@ -42,6 +43,8 @@ impl From<anyhow::Error> for AppError {
 #[derive(Clone, Serialize)]
 pub struct SessionView {
     pub name: String,
+    pub ssh_user: String,
+    pub listen: String,
     pub status: SessionStatus,
     pub upstream_kind: String,
     pub upstream_summary: String,
@@ -61,7 +64,6 @@ pub struct ClientView {
 
 #[derive(Serialize)]
 pub struct ServerInfo {
-    pub listen: String,
     pub host_key_fpr: String,
 }
 
@@ -118,11 +120,10 @@ pub fn upstream_summary(s: &UpstreamSpec) -> String {
 
 pub async fn persist_now(state: &AppState) -> anyhow::Result<()> {
     let runners = state.runners.read().await;
-    let listen = state.server_listen_addr.read().await.to_string();
     let api_listen = state.api_listen.read().await.clone();
     let cfg = termhub_core::Config {
         server: termhub_core::ServerConfig {
-            listen,
+            listen: "0.0.0.0:2222".into(),
             host_key_path: "host_key".into(),
             max_clients_per_session: state.max_clients_per_session,
             api_listen,
@@ -141,49 +142,36 @@ pub async fn list_sessions(state: &AppState) -> Result<Vec<SessionView>, AppErro
     let runners = state.runners.read().await;
     let mut out = Vec::new();
 
-    // 1. 常规会话（从 mgr 中获取）
-    for entry in state.mgr.list().await {
-        let key = entry.name.to_ascii_lowercase();
-        let status = entry.status.borrow().clone();
-        let (kind, summary, upstream, auto_rc) = match runners.get(&key) {
-            Some(r) => (
-                upstream_kind_label(&r.config.upstream),
-                upstream_summary(&r.config.upstream),
-                r.config.upstream.clone(),
-                r.config.auto_reconnect,
-            ),
-            None => (
-                "unknown".to_string(),
-                String::new(),
-                UpstreamSpec::Loopback,
-                true,
-            ),
+    for (_key, entry) in runners.iter() {
+        let mgr_entry = match &entry.session_mgr {
+            Some(mgr) => mgr.get(&entry.config.ssh_user).await,
+            None => None,
         };
-        let client_count = entry.clients.list().await.len();
-        out.push(SessionView {
-            name: entry.name.clone(),
-            status,
-            upstream_kind: kind,
-            upstream_summary: summary,
-            upstream,
-            auto_reconnect: auto_rc,
-            client_count,
-        });
-    }
-
-    // 2. HTTP 代理会话（不在 mgr 中，只在 runners 中）
-    for (key, entry) in runners.iter() {
-        if state.mgr.get(key).await.is_some() {
-            continue;
-        }
+        let status = match &mgr_entry {
+            Some(e) => e.status.borrow().clone(),
+            None => {
+                // 不在 mgr 中：已停止或 HTTP 代理
+                if entry.proxy_cancel.is_some() {
+                    SessionStatus::Running { uptime_secs: 0 }
+                } else {
+                    SessionStatus::Stopped
+                }
+            }
+        };
+        let client_count = match &mgr_entry {
+            Some(e) => e.clients.list().await.len(),
+            None => 0,
+        };
         out.push(SessionView {
             name: entry.config.name.clone(),
-            status: SessionStatus::Running { uptime_secs: 0 },
+            ssh_user: entry.config.ssh_user.clone(),
+            listen: entry.config.listen.clone(),
+            status,
             upstream_kind: upstream_kind_label(&entry.config.upstream),
             upstream_summary: upstream_summary(&entry.config.upstream),
             upstream: entry.config.upstream.clone(),
             auto_reconnect: entry.config.auto_reconnect,
-            client_count: 0,
+            client_count,
         });
     }
 
@@ -219,6 +207,9 @@ pub async fn create_session(
                 started: None,
                 config: cfg,
                 proxy_cancel: Some(proxy_cancel),
+                sshd_cancel: None,
+                sshd_handle: None,
+                session_mgr: None,
             },
         );
 
@@ -226,18 +217,25 @@ pub async fn create_session(
         return Ok((name, status_rx));
     }
 
-    // 常规会话模式：通过 Hub + UpstreamDriver
+    // 常规会话模式：通过 Hub + UpstreamDriver + 独立 SSH server
     let password = cfg.password.clone();
+    let ssh_user = cfg.ssh_user.clone();
+    let listen = cfg.listen.clone();
     let auto_rc = cfg.auto_reconnect;
     let pty = cfg.pty_override.clone();
     let upstream = cfg.upstream.clone();
     let spec_for_factory = cfg.upstream.clone();
     let factory: termhub_core::runner::DriverFactory =
         Box::new(move || create_driver(&spec_for_factory).expect("driver factory"));
+
+    // 1. 创建独立的 SessionMgr（每会话一个）
+    let session_mgr = Arc::new(termhub_core::SessionMgr::new());
+    let ssh_user_for_auth = cfg.ssh_user.clone();
     let started = start_session(
-        state.mgr.clone(),
+        session_mgr.clone(),
         name.clone(),
-        password,
+        ssh_user_for_auth,
+        password.clone(),
         factory,
         RunnerConfig {
             auto_reconnect: auto_rc,
@@ -246,10 +244,27 @@ pub async fn create_session(
     )
     .await?;
 
+    // 2. 为该会话启动独立的 SSH server
+    let sshd_cancel = CancellationToken::new();
+    let sshd_cfg = termhub_sshd::ServerConfig {
+        listen: listen.clone(),
+        host_keys: state.host_keys.clone(),
+        max_clients_per_session: state.max_clients_per_session,
+    };
+    let (sshd_handle, _sshd_addr) = termhub_sshd::start(
+        sshd_cfg,
+        session_mgr.clone(),
+        sshd_cancel.clone(),
+    )
+    .await
+    .map_err(|e| AppError::Internal(e))?;
+
     let status_rx = started.status_rx.clone();
     let cfg_for_runner = SessionConfig {
         name: name.clone(),
         password: cfg.password,
+        ssh_user,
+        listen,
         auto_reconnect: auto_rc,
         pty_override: pty,
         upstream,
@@ -260,6 +275,9 @@ pub async fn create_session(
             started: Some(started),
             config: cfg_for_runner,
             proxy_cancel: None,
+            sshd_cancel: Some(sshd_cancel),
+            sshd_handle: Some(sshd_handle),
+            session_mgr: Some(session_mgr),
         },
     );
 
@@ -269,26 +287,50 @@ pub async fn create_session(
 
 pub async fn stop_session(state: &AppState, name: &str) -> Result<(), AppError> {
     let key = name.to_ascii_lowercase();
-    if let Some(r) = state.runners.write().await.remove(&key) {
-        // 取消常规会话
-        if let Some(ref started) = r.started {
-            started.cancel.cancel();
-        }
-        // 取消 HTTP 代理
-        if let Some(ref proxy_cancel) = r.proxy_cancel {
-            proxy_cancel.cancel();
-        }
-        if let Some(started) = r.started {
-            let _ = started.handle.await;
+    // 1. 触发取消
+    {
+        let runners = state.runners.read().await;
+        if let Some(r) = runners.get(&key) {
+            if let Some(ref started) = r.started {
+                started.cancel.cancel();
+            }
+            if let Some(ref proxy_cancel) = r.proxy_cancel {
+                proxy_cancel.cancel();
+            }
+            if let Some(ref sshd_cancel) = r.sshd_cancel {
+                sshd_cancel.cancel();
+            }
         }
     }
-    state.mgr.unregister(name).await;
+    // 2. 等待任务结束并清空 started
+    let (runner_handle, sshd_handle) = {
+        let mut runners = state.runners.write().await;
+        if let Some(r) = runners.get_mut(&key) {
+            let rh = r.started.take().map(|s| s.handle);
+            let sh = r.sshd_handle.take();
+            r.proxy_cancel = None;
+            r.sshd_cancel = None;
+            (rh, sh)
+        } else {
+            (None, None)
+        }
+    };
+    if let Some(h) = runner_handle {
+        let _ = h.await;
+    }
+    if let Some(h) = sshd_handle {
+        let _ = h.await;
+    }
     persist_now(state).await?;
     Ok(())
 }
 
 pub async fn delete_session(state: &AppState, name: &str) -> Result<(), AppError> {
-    stop_session(state, name).await
+    stop_session(state, name).await?;
+    let key = name.to_ascii_lowercase();
+    state.runners.write().await.remove(&key);
+    persist_now(state).await?;
+    Ok(())
 }
 
 pub async fn restart_session(state: &AppState, name: &str) -> Result<termhub_core::StatusRx, AppError> {
@@ -316,13 +358,19 @@ pub async fn update_session(
 }
 
 pub async fn list_clients(state: &AppState, name: &str) -> Result<Vec<ClientView>, AppError> {
-    let entry = state.mgr.get(name).await;
+    let key = name.to_ascii_lowercase();
+    let runners = state.runners.read().await;
+    let runner = match runners.get(&key) {
+        Some(r) => r,
+        None => return Ok(Vec::new()),
+    };
+    let entry = match &runner.session_mgr {
+        Some(mgr) => mgr.get(&runner.config.ssh_user).await,
+        None => return Ok(Vec::new()),
+    };
     let v = match entry {
         Some(e) => e.clients.list().await,
-        None => {
-            // HTTP 代理会话不在 mgr 中，无下联
-            return Ok(Vec::new());
-        }
+        None => return Ok(Vec::new()),
     };
     Ok(v.into_iter()
         .map(|s: ClientRecordSnapshot| ClientView {
@@ -344,20 +392,25 @@ pub async fn kick_client(
     session: &str,
     client_id: u64,
 ) -> Result<bool, AppError> {
-    let entry = state.mgr.get(session).await;
+    let key = session.to_ascii_lowercase();
+    let runners = state.runners.read().await;
+    let runner = match runners.get(&key) {
+        Some(r) => r,
+        None => return Ok(false),
+    };
+    let entry = match &runner.session_mgr {
+        Some(mgr) => mgr.get(&runner.config.ssh_user).await,
+        None => return Ok(false),
+    };
     match entry {
         Some(e) => Ok(e.clients.kick(client_id).await),
-        None => {
-            // HTTP 代理会话不在 mgr 中，无下联可踢
-            Ok(false)
-        }
+        None => Ok(false),
     }
 }
 
 pub async fn get_server_info(state: &AppState) -> Result<ServerInfo, AppError> {
     Ok(ServerInfo {
-        listen: state.server_listen_addr.read().await.to_string(),
-        host_key_fpr: state.host_key_fpr.read().await.clone(),
+        host_key_fpr: state.host_key_fpr.clone(),
     })
 }
 
@@ -367,48 +420,3 @@ pub fn list_serial_ports() -> Result<Vec<String>, AppError> {
         .map_err(|e| AppError::Internal(e.into()))
 }
 
-pub async fn set_listen_addr(state: &AppState, addr: &str) -> Result<(), AppError> {
-    let _parsed: std::net::SocketAddr = addr
-        .parse()
-        .map_err(|e: std::net::AddrParseError| AppError::Internal(e.into()))?;
-
-    {
-        let sshd = state.sshd.read().await;
-        sshd.cancel.cancel();
-    }
-
-    let old_handle = {
-        let mut sshd = state.sshd.write().await;
-        let handle = std::mem::replace(&mut sshd.handle, tokio::spawn(async {}));
-        handle
-    };
-    let _ = old_handle.await;
-
-    let new_cancel = tokio_util::sync::CancellationToken::new();
-    let host_keys_clone = {
-        let sshd = state.sshd.read().await;
-        sshd.host_keys.clone()
-    };
-
-    let cfg = termhub_sshd::ServerConfig {
-        listen: addr.to_string(),
-        host_keys: host_keys_clone,
-        max_clients_per_session: state.max_clients_per_session,
-    };
-    let (new_handle, new_addr) = termhub_sshd::start(cfg, state.mgr.clone(), new_cancel.clone())
-        .await
-        .map_err(|e| AppError::Internal(e))?;
-
-    {
-        let mut sshd = state.sshd.write().await;
-        sshd.cancel = new_cancel;
-        sshd.handle = new_handle;
-    }
-
-    *state.server_listen_addr.write().await = new_addr;
-
-    tracing::info!(%new_addr, "sshd rebound");
-
-    persist_now(state).await?;
-    Ok(())
-}

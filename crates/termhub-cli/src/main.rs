@@ -63,10 +63,16 @@ enum SessionAction {
 
 #[derive(Args)]
 struct CreateArgs {
-    /// Session name (used as SSH username)
+    /// Session name
     name: String,
     /// Password for SSH authentication
     password: String,
+    /// SSH username (default: admin)
+    #[arg(long, default_value = "admin")]
+    ssh_user: String,
+    /// SSH listen address (default: 0.0.0.0:2222)
+    #[arg(long, default_value = "0.0.0.0:2222")]
+    listen: String,
     /// Enable auto-reconnect on upstream disconnect
     #[arg(long, default_value = "true")]
     auto_reconnect: bool,
@@ -88,6 +94,12 @@ struct UpdateArgs {
     /// New password (omit to keep current)
     #[arg(long)]
     password: Option<String>,
+    /// SSH username (omit to keep current)
+    #[arg(long)]
+    ssh_user: Option<String>,
+    /// SSH listen address (omit to keep current)
+    #[arg(long)]
+    listen: Option<String>,
     /// Enable auto-reconnect
     #[arg(long)]
     auto_reconnect: Option<bool>,
@@ -226,6 +238,10 @@ struct ApiResponse<T> {
 struct SessionRow {
     #[tabled(rename = "NAME")]
     name: String,
+    #[tabled(rename = "SSH_USER")]
+    ssh_user: String,
+    #[tabled(rename = "LISTEN")]
+    listen: String,
     #[tabled(rename = "STATUS")]
     status: String,
     #[tabled(rename = "UPSTREAM")]
@@ -265,6 +281,8 @@ struct ServerRow {
 #[derive(Deserialize, Serialize)]
 struct SessionView {
     name: String,
+    ssh_user: String,
+    listen: String,
     status: serde_json::Value,
     upstream_kind: String,
     upstream_summary: String,
@@ -284,7 +302,6 @@ struct ClientView {
 
 #[derive(Deserialize, Serialize)]
 struct ServerInfo {
-    listen: String,
     host_key_fpr: String,
 }
 
@@ -479,6 +496,8 @@ async fn main() -> Result<()> {
                         .iter()
                         .map(|s| SessionRow {
                             name: s.name.clone(),
+                            ssh_user: s.ssh_user.clone(),
+                            listen: s.listen.clone(),
                             status: format_status(&s.status),
                             upstream: format!("{} ({})", s.upstream_kind, s.upstream_summary),
                             auto_reconnect: if s.auto_reconnect {
@@ -500,6 +519,8 @@ async fn main() -> Result<()> {
                 let config = SessionConfig {
                     name: args.name,
                     password: args.password,
+                    ssh_user: args.ssh_user,
+                    listen: args.listen,
                     auto_reconnect: args.auto_reconnect,
                     pty_override: pty,
                     upstream: upstream_to_spec(&args.upstream),
@@ -554,9 +575,14 @@ async fn main() -> Result<()> {
                     .map(upstream_to_spec)
                     .unwrap_or(UpstreamSpec::Loopback); // placeholder
 
+                let ssh_user = args.ssh_user.unwrap_or_else(|| current.ssh_user.clone());
+                let listen = args.listen.unwrap_or_else(|| current.listen.clone());
+
                 let config = SessionConfig {
                     name: args.name.clone(),
                     password,
+                    ssh_user,
+                    listen,
                     auto_reconnect,
                     pty_override: None,
                     upstream,
@@ -616,10 +642,6 @@ async fn main() -> Result<()> {
                     println!("{}", serde_json::to_string_pretty(&info)?);
                 } else {
                     let rows = vec![
-                        ServerRow {
-                            key: "Listen".into(),
-                            value: info.listen,
-                        },
                         ServerRow {
                             key: "Host Key Fingerprint".into(),
                             value: info.host_key_fpr,

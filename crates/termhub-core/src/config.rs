@@ -46,6 +46,12 @@ pub struct SessionConfig {
     pub name: String,
     /// 运行期为明文；持久化时由 config 层在序列化前加密为 base64 字符串
     pub password: String,
+    /// SSH 下联登录用户名（默认 admin）
+    #[serde(default = "default_ssh_user")]
+    pub ssh_user: String,
+    /// SSH 下联监听地址（每会话独立端口，例 "0.0.0.0:2222"）
+    #[serde(default = "default_listen")]
+    pub listen: String,
     #[serde(default = "yes")]
     pub auto_reconnect: bool,
     #[serde(default)]
@@ -55,6 +61,12 @@ pub struct SessionConfig {
 
 fn yes() -> bool {
     true
+}
+fn default_ssh_user() -> String {
+    "admin".into()
+}
+fn default_listen() -> String {
+    "0.0.0.0:2222".into()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

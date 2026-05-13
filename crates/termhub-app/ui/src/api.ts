@@ -43,10 +43,6 @@ export async function getServerInfo(): Promise<ServerInfo> {
   return invoke("get_server_info");
 }
 
-export async function setListenAddr(addr: string): Promise<void> {
-  return invoke("set_listen_addr", { addr });
-}
-
 export async function getAutostart(): Promise<boolean> {
   return invoke("get_autostart");
 }

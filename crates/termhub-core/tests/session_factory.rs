@@ -25,6 +25,7 @@ async fn start_session_registers_and_reaches_running() {
     let started = start_session(
         mgr.clone(),
         "echo".to_string(),
+        "admin".to_string(),
         "pass".to_string(),
         Box::new(|| Box::new(Stub)),
         RunnerConfig {
@@ -46,7 +47,7 @@ async fn start_session_registers_and_reaches_running() {
         *status_rx.borrow(),
         SessionStatus::Running { .. }
     ));
-    assert!(mgr.get("echo").await.is_some());
+    assert!(mgr.get("admin").await.is_some());
 
     started.cancel.cancel();
     let _ = started.handle.await;
