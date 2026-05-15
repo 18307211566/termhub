@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import type React from "react";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -8,7 +7,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   createSession,
   deleteSession,
-  exitApp,
   getAutostart,
   getServerInfo,
   kickClient,
@@ -95,7 +93,7 @@ function defaultUpstream(kind: UpKind): UpstreamSpec {
         output_eol: "as_is",
       };
     case "local_shell":
-      return { type: "local_shell", command: "cmd.exe", args: ["/c", "echo hello"] };
+      return { type: "local_shell", command: "cmd.exe", args: [] };
     case "http_proxy":
       return { type: "http_proxy", listen: "0.0.0.0:8080", target: "127.0.0.1:80", protocol: "tcp" };
   }
@@ -136,14 +134,10 @@ function formatConnectedAt(secs: number): string {
 function UpstreamFields({
   upstream,
   setUpstream,
-  shellArgsText,
-  setShellArgsText,
   serialPorts,
 }: {
   upstream: UpstreamSpec;
   setUpstream: React.Dispatch<React.SetStateAction<UpstreamSpec>>;
-  shellArgsText: string;
-  setShellArgsText: (t: string) => void;
   serialPorts: string[];
 }) {
   if (upstream.type === "ssh") {
@@ -236,20 +230,13 @@ function UpstreamFields({
   }
   if (upstream.type === "local_shell") {
     return (
-      <div className="flex flex-col gap-2">
-        <div>
-          <label className="mb-1 block text-xs text-slate-500">命令</label>
-          <input className="input w-full" value={upstream.command} onChange={(e) => setUpstream({ ...upstream, command: e.target.value })} />
-        </div>
-        <div>
-          <label className="mb-1 block text-xs text-slate-500">参数（每行一项）</label>
-          <textarea className="input font-mono text-xs w-full" rows={3} value={shellArgsText} onChange={(e) => {
-            const t = e.target.value;
-            setShellArgsText(t);
-            const args = t.split(/\r?\n/).filter(Boolean);
-            setUpstream((prev) => prev.type === "local_shell" ? { ...prev, args } : prev);
-          }} />
-        </div>
+      <div>
+        <label className="mb-1 block text-xs text-slate-500">命令</label>
+        <input
+          className="input w-full"
+          value={upstream.command}
+          onChange={(e) => setUpstream({ ...upstream, command: e.target.value, args: [] })}
+        />
       </div>
     );
   }
@@ -296,18 +283,17 @@ export default function App() {
   const [newPtyOverride, setNewPtyOverride] = useState<{ cols: number; rows: number } | null>(null);
   const [upKind, setUpKind] = useState<UpKind>("ssh");
   const [upstream, setUpstream] = useState<UpstreamSpec>(() => defaultUpstream("ssh"));
-  const [shellArgsText, setShellArgsText] = useState("/c\necho hello");
   const [serialPorts, setSerialPorts] = useState<string[]>([]);
 
   // 编辑弹窗
   const [showEdit, setShowEdit] = useState(false);
+  const [editName, setEditName] = useState("");
   const [editSshUser, setEditSshUser] = useState("admin");
   const [editListen, setEditListen] = useState("0.0.0.0:2222");
   const [editPassword, setEditPassword] = useState("");
   const [editAutoRc, setEditAutoRc] = useState(true);
   const [editUpKind, setEditUpKind] = useState<UpKind>("ssh");
   const [editUpstream, setEditUpstream] = useState<UpstreamSpec>(defaultUpstream("ssh"));
-  const [editShellArgsText, setEditShellArgsText] = useState("/c\necho hello");
 
   const selected = useMemo(
     () => sessions.find((s) => s.name === selectedName) || null,
@@ -355,33 +341,8 @@ export default function App() {
     return () => clearInterval(interval);
   }, [refreshSessions, refreshServer]);
 
-  // 关闭窗口确认：直接退出 or 收到托盘
-  useEffect(() => {
-    const win = getCurrentWindow();
-    let unlisten: (() => void) | undefined;
-
-    win.onCloseRequested(async (event) => {
-      event.preventDefault();
-      const shouldQuit = window.confirm("直接退出程序，还是收到系统托盘中？\n\n[确定] = 直接退出\n[取消] = 收到托盘");
-      if (shouldQuit) {
-        await exitApp();
-      } else {
-        await win.hide();
-      }
-    }).then((fn) => {
-      unlisten = fn;
-    }).catch(() => {});
-
-    return () => {
-      unlisten?.();
-    };
-  }, []);
-
   useEffect(() => {
     setUpstream(defaultUpstream(upKind));
-    if (upKind === "local_shell") {
-      setShellArgsText("/c\necho hello");
-    }
   }, [upKind]);
 
   // 1Hz 刷新选中会话的下联
@@ -419,6 +380,7 @@ export default function App() {
 
   function openEditDialog() {
     if (!selected) return;
+    setEditName(selected.name);
     setEditSshUser(selected.ssh_user);
     setEditListen(selected.listen);
     setEditPassword("");
@@ -426,11 +388,6 @@ export default function App() {
     const k = kindToUpKind(selected.upstream_kind);
     setEditUpKind(k === "loopback" ? "ssh" : k);
     setEditUpstream(selected.upstream.type === "loopback" ? defaultUpstream("ssh") : selected.upstream);
-    if (selected.upstream.type === "local_shell") {
-      setEditShellArgsText(selected.upstream.args.join("\n"));
-    } else {
-      setEditShellArgsText("/c\necho hello");
-    }
     setShowEdit(true);
   }
 
@@ -438,15 +395,16 @@ export default function App() {
     ev.preventDefault();
     let up = upstream;
     if (up.type === "local_shell") {
-      up = { type: "local_shell", command: up.command, args: shellArgsText.split(/\r?\n/).filter(Boolean) };
+      up = { type: "local_shell", command: up.command, args: [] };
     }
+    const isHttpProxy = up.type === "http_proxy";
     const cfg: SessionConfig = {
       name: newName.trim(),
-      password: newPassword,
-      ssh_user: newSshUser,
-      listen: newListen,
-      auto_reconnect: newAutoRc,
-      pty_override: newPtyOverride,
+      password: isHttpProxy ? "" : newPassword,
+      ssh_user: isHttpProxy ? "" : newSshUser,
+      listen: isHttpProxy ? "" : newListen,
+      auto_reconnect: isHttpProxy ? false : newAutoRc,
+      pty_override: isHttpProxy ? null : newPtyOverride,
       upstream: up,
     };
     try {
@@ -465,22 +423,22 @@ export default function App() {
     if (!selected) return;
     let up = editUpstream;
     if (up.type === "local_shell") {
-      up = { type: "local_shell", command: up.command, args: editShellArgsText.split(/\r?\n/).filter(Boolean) };
+      up = { type: "local_shell", command: up.command, args: [] };
     }
-    // 密码留空时保留原密码（后端会重新创建会话，所以需要提供密码）
-    const password = editPassword || selected.name;
+    const isHttpProxy = up.type === "http_proxy";
     const cfg: SessionConfig = {
-      name: selected.name,
-      password,
-      ssh_user: editSshUser,
-      listen: editListen,
-      auto_reconnect: editAutoRc,
+      name: editName.trim(),
+      password: isHttpProxy ? "" : editPassword,
+      ssh_user: isHttpProxy ? "" : editSshUser,
+      listen: isHttpProxy ? "" : editListen,
+      auto_reconnect: isHttpProxy ? false : editAutoRc,
       pty_override: null,
       upstream: up,
     };
     try {
       await updateSession(selected.name, cfg);
       setShowEdit(false);
+      setSelectedName(editName.trim());
       await refreshSessions();
     } catch (e) {
       setErr(String(e));
@@ -562,10 +520,13 @@ export default function App() {
               onClick={() => {
                 setShowNew(true);
                 setUpKind("ssh");
+                setUpstream(defaultUpstream("ssh"));
                 setNewName("");
                 setNewPassword("admin");
                 setNewSshUser("admin");
                 setNewListen("0.0.0.0:2222");
+                setNewAutoRc(true);
+                setNewPtyOverride(null);
               }}
             >
               + 新建会话
@@ -585,8 +546,12 @@ export default function App() {
                     <span className={statusDot(selected.status)}>
                       {formatStatus(selected.status)}
                     </span>
-                    <span>·</span>
-                    <span>{selected.upstream_kind}</span>
+                    {selected.upstream_kind !== "http_proxy" && (
+                      <>
+                        <span>·</span>
+                        <span>{selected.upstream_kind}</span>
+                      </>
+                    )}
                     <span>·</span>
                     <span className="font-mono text-xs text-slate-500">{selected.upstream_summary}</span>
                   </div>
@@ -669,41 +634,6 @@ export default function App() {
                 <label className="mb-1 block text-xs text-slate-500">会话名称</label>
                 <input className="input w-full" required value={newName} onChange={(e) => setNewName(e.target.value)} />
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">SSH 用户名</label>
-                  <input className="input w-full" value={newSshUser} onChange={(e) => setNewSshUser(e.target.value)} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">SSH 监听地址</label>
-                  <input className="input w-full" value={newListen} onChange={(e) => setNewListen(e.target.value)} />
-                </div>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-slate-500">SSH 密码</label>
-                <div className="flex gap-1">
-                  <input className="input flex-1" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
-                  <button type="button" className="btn-sm" onClick={() => {
-                    const chars = "abcdefghijkmnpqrstuvwxyz23456789";
-                    setNewPassword(Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join(""));
-                  }}>随机</button>
-                </div>
-              </div>
-              <div className="flex gap-3 text-sm">
-                <label className="flex items-center gap-1 text-slate-300">
-                  <input type="checkbox" checked={newAutoRc} onChange={(e) => setNewAutoRc(e.target.checked)} /> 自动重连
-                </label>
-                <label className="flex items-center gap-1 text-slate-300">
-                  <input type="checkbox" checked={newPtyOverride !== null} onChange={(e) => setNewPtyOverride(e.target.checked ? { cols: 80, rows: 24 } : null)} /> PTY 覆盖
-                </label>
-                {newPtyOverride && (
-                  <div className="flex gap-1">
-                    <input className="input w-16" type="number" value={newPtyOverride.cols} onChange={(e) => setNewPtyOverride({ ...newPtyOverride, cols: Number(e.target.value) || 80 })} />
-                    <span className="self-center text-slate-500">×</span>
-                    <input className="input w-16" type="number" value={newPtyOverride.rows} onChange={(e) => setNewPtyOverride({ ...newPtyOverride, rows: Number(e.target.value) || 24 })} />
-                  </div>
-                )}
-              </div>
               <div>
                 <label className="mb-1 block text-xs text-slate-500">上游类型</label>
                 <select className="input w-full" value={upKind} onChange={(e) => setUpKind(e.target.value as UpKind)}>
@@ -715,13 +645,52 @@ export default function App() {
                   <option value="http_proxy">端口转发</option>
                 </select>
               </div>
-              <UpstreamFields
-                upstream={upstream}
-                setUpstream={setUpstream}
-                shellArgsText={shellArgsText}
-                setShellArgsText={setShellArgsText}
-                serialPorts={serialPorts}
-              />
+              <div>
+                <div className="mb-2 text-xs font-medium text-slate-400">上游参数</div>
+                <UpstreamFields upstream={upstream} setUpstream={setUpstream} serialPorts={serialPorts} />
+              </div>
+              {upKind !== "http_proxy" && (
+                <div className="border-t border-slate-800 pt-3">
+                  <div className="mb-2 text-xs font-medium text-slate-400">下联（SSH 终端接入）</div>
+                  <div className="flex flex-col gap-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="mb-1 block text-xs text-slate-500">SSH 用户名</label>
+                        <input className="input w-full" value={newSshUser} onChange={(e) => setNewSshUser(e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs text-slate-500">SSH 监听地址</label>
+                        <input className="input w-full" value={newListen} onChange={(e) => setNewListen(e.target.value)} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">SSH 密码</label>
+                      <div className="flex gap-1">
+                        <input className="input flex-1" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+                        <button type="button" className="btn-sm" onClick={() => {
+                          const chars = "abcdefghijkmnpqrstuvwxyz23456789";
+                          setNewPassword(Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join(""));
+                        }}>随机</button>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3 text-sm">
+                      <label className="flex items-center gap-1 text-slate-300">
+                        <input type="checkbox" checked={newAutoRc} onChange={(e) => setNewAutoRc(e.target.checked)} /> 自动重连
+                      </label>
+                      <label className="flex items-center gap-1 text-slate-300">
+                        <input type="checkbox" checked={newPtyOverride !== null} onChange={(e) => setNewPtyOverride(e.target.checked ? { cols: 80, rows: 24 } : null)} /> PTY 覆盖
+                      </label>
+                      {newPtyOverride && (
+                        <div className="flex gap-1">
+                          <input className="input w-16" type="number" value={newPtyOverride.cols} onChange={(e) => setNewPtyOverride({ ...newPtyOverride, cols: Number(e.target.value) || 80 })} />
+                          <span className="self-center text-slate-500">×</span>
+                          <input className="input w-16" type="number" value={newPtyOverride.rows} onChange={(e) => setNewPtyOverride({ ...newPtyOverride, rows: Number(e.target.value) || 24 })} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="mt-auto flex justify-end gap-3 pt-4">
                 <button type="button" className="btn-sm" onClick={() => setShowNew(false)}>取消</button>
                 <button type="submit" className="btn-sm bg-emerald-600 text-white hover:bg-emerald-500">创建并启动</button>
@@ -735,38 +704,18 @@ export default function App() {
       {showEdit && selected && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
           <div className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
-            <h3 className="mb-4 text-lg font-medium text-white">编辑: {selected.name}</h3>
+            <h3 className="mb-4 text-lg font-medium text-white">编辑会话</h3>
             <form className="flex flex-1 flex-col gap-3 overflow-auto" onSubmit={(e) => void applyEdit(e)}>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">SSH 用户名</label>
-                  <input className="input" value={editSshUser} onChange={(e) => setEditSshUser(e.target.value)} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-slate-500">SSH 监听地址</label>
-                  <input className="input" value={editListen} onChange={(e) => setEditListen(e.target.value)} />
-                </div>
-              </div>
               <div>
-                <label className="mb-1 block text-xs text-slate-500">密码（留空则不修改）</label>
-                <div className="flex gap-1">
-                  <input className="input flex-1" placeholder="新密码" value={editPassword} onChange={(e) => setEditPassword(e.target.value)} />
-                  <button type="button" className="btn-sm" onClick={() => {
-                    const chars = "abcdefghijkmnpqrstuvwxyz23456789";
-                    setEditPassword(Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join(""));
-                  }}>随机</button>
-                </div>
+                <label className="mb-1 block text-xs text-slate-500">会话名称</label>
+                <input className="input w-full" required value={editName} onChange={(e) => setEditName(e.target.value)} />
               </div>
-              <label className="flex items-center gap-1 text-sm text-slate-300">
-                <input type="checkbox" checked={editAutoRc} onChange={(e) => setEditAutoRc(e.target.checked)} /> 自动重连
-              </label>
               <div>
                 <label className="mb-1 block text-xs text-slate-500">上游类型</label>
-                <select className="input" value={editUpKind} onChange={(e) => {
+                <select className="input w-full" value={editUpKind} onChange={(e) => {
                   const k = e.target.value as UpKind;
                   setEditUpKind(k);
                   setEditUpstream(defaultUpstream(k));
-                  setEditShellArgsText("/c\necho hello");
                 }}>
                   <option value="ssh">SSH 客户端</option>
                   <option value="telnet">Telnet</option>
@@ -776,13 +725,40 @@ export default function App() {
                   <option value="http_proxy">端口转发</option>
                 </select>
               </div>
-              <UpstreamFields
-                upstream={editUpstream}
-                setUpstream={setEditUpstream}
-                shellArgsText={editShellArgsText}
-                setShellArgsText={setEditShellArgsText}
-                serialPorts={serialPorts}
-              />
+              <div>
+                <div className="mb-2 text-xs font-medium text-slate-400">上游参数</div>
+                <UpstreamFields upstream={editUpstream} setUpstream={setEditUpstream} serialPorts={serialPorts} />
+              </div>
+              {editUpKind !== "http_proxy" && (
+                <div className="border-t border-slate-800 pt-3">
+                  <div className="mb-2 text-xs font-medium text-slate-400">下联（SSH 终端接入）</div>
+                  <div className="flex flex-col gap-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="mb-1 block text-xs text-slate-500">SSH 用户名</label>
+                        <input className="input w-full" value={editSshUser} onChange={(e) => setEditSshUser(e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs text-slate-500">SSH 监听地址</label>
+                        <input className="input w-full" value={editListen} onChange={(e) => setEditListen(e.target.value)} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs text-slate-500">密码（留空则不修改）</label>
+                      <div className="flex gap-1">
+                        <input className="input flex-1" placeholder="新密码" value={editPassword} onChange={(e) => setEditPassword(e.target.value)} />
+                        <button type="button" className="btn-sm" onClick={() => {
+                          const chars = "abcdefghijkmnpqrstuvwxyz23456789";
+                          setEditPassword(Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join(""));
+                        }}>随机</button>
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-1 text-sm text-slate-300">
+                      <input type="checkbox" checked={editAutoRc} onChange={(e) => setEditAutoRc(e.target.checked)} /> 自动重连
+                    </label>
+                  </div>
+                </div>
+              )}
               <div className="mt-auto flex justify-end gap-3 pt-4">
                 <button type="button" className="btn-sm" onClick={() => setShowEdit(false)}>取消</button>
                 <button type="submit" className="btn-sm bg-blue-600 text-white hover:bg-blue-500">保存</button>

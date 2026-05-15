@@ -54,6 +54,9 @@ pub struct SessionConfig {
     pub listen: String,
     #[serde(default = "yes")]
     pub auto_reconnect: bool,
+    /// 为 false 时：仅保留配置，程序启动时不自动拉起（用户曾手动停止）
+    #[serde(default = "yes")]
+    pub launch_on_startup: bool,
     #[serde(default)]
     pub pty_override: Option<PtySize>,
     pub upstream: UpstreamSpec,

@@ -10,6 +10,7 @@ mod state;
 use std::collections::HashMap;
 
 use tauri::Manager;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 use commands::{
     create_session, delete_session, exit_app, get_server_info, kick_client, list_clients, list_serial_ports,
@@ -58,6 +59,20 @@ async fn main() -> anyhow::Result<()> {
     let sessions_to_start = stored.sessions.clone();
 
     for s in sessions_to_start {
+        if !s.launch_on_startup {
+            runners_map.insert(
+                s.name.to_ascii_lowercase(),
+                RunnerEntry {
+                    started: None,
+                    config: s,
+                    proxy_cancel: None,
+                    sshd_cancel: None,
+                    sshd_handle: None,
+                    session_mgr: None,
+                },
+            );
+            continue;
+        }
         if let UpstreamSpec::HttpProxy { ref listen, ref target, ref protocol } = s.upstream {
             let cancel = tokio_util::sync::CancellationToken::new();
             let listen = listen.clone();
@@ -153,6 +168,7 @@ async fn main() -> anyhow::Result<()> {
             ssh_user: "admin".into(),
             listen: "0.0.0.0:2223".into(),
             auto_reconnect: true,
+            launch_on_startup: true,
             pty_override: None,
             upstream: spec.clone(),
         };
@@ -237,6 +253,7 @@ async fn main() -> anyhow::Result<()> {
     let runners_for_status = app_state.runners.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.show();
@@ -304,10 +321,28 @@ async fn main() -> anyhow::Result<()> {
 
             Ok(())
         })
-        .on_window_event(|win, evt| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = evt {
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let _ = win.hide();
+                let win = window.clone();
+                std::thread::spawn(move || {
+                    let exit_app = win
+                        .dialog()
+                        .message(
+                            "直接退出程序，还是收到系统托盘中？\n\n[确定] = 直接退出\n[取消] = 收到托盘",
+                        )
+                        .title("Termhub")
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "确定".into(),
+                            "取消".into(),
+                        ))
+                        .blocking_show();
+                    if exit_app {
+                        win.app_handle().exit(0);
+                    } else {
+                        let _ = win.hide();
+                    }
+                });
             }
         })
         .run(tauri::generate_context!())

@@ -181,8 +181,9 @@ pub async fn list_sessions(state: &AppState) -> Result<Vec<SessionView>, AppErro
 /// Returns `(session_name, StatusRx)` so the caller can spawn a status listener.
 pub async fn create_session(
     state: &AppState,
-    cfg: SessionConfig,
+    mut cfg: SessionConfig,
 ) -> Result<(String, termhub_core::StatusRx), AppError> {
+    cfg.launch_on_startup = true;
     let name = cfg.name.clone();
 
     // 端口转发模式：不经过 Hub，直接启动 TCP/UDP 转发
@@ -272,6 +273,7 @@ pub async fn create_session(
         ssh_user,
         listen,
         auto_reconnect: auto_rc,
+        launch_on_startup: cfg.launch_on_startup,
         pty_override: pty,
         upstream,
     };
@@ -326,6 +328,12 @@ pub async fn stop_session(state: &AppState, name: &str) -> Result<(), AppError> 
     }
     if let Some(h) = sshd_handle {
         let _ = h.await;
+    }
+    {
+        let mut runners = state.runners.write().await;
+        if let Some(r) = runners.get_mut(&key) {
+            r.config.launch_on_startup = false;
+        }
     }
     persist_now(state).await?;
     Ok(())

@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "core:event:allow-listen",
-    "autostart:default"
+    "autostart:default",
+    "dialog:default"
   ]
 }

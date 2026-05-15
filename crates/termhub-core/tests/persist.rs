@@ -17,7 +17,10 @@ fn save_then_load_roundtrip() {
         sessions: vec![SessionConfig {
             name: "x".into(),
             password: "p".into(),
+            ssh_user: "u".into(),
+            listen: "0.0.0.0:2222".into(),
             auto_reconnect: true,
+            launch_on_startup: true,
             pty_override: None,
             upstream: UpstreamSpec::RawTcp {
                 host: "h".into(),

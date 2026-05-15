@@ -526,6 +526,7 @@ async fn main() -> Result<()> {
                     ssh_user: args.ssh_user,
                     listen: args.listen,
                     auto_reconnect: args.auto_reconnect,
+                    launch_on_startup: true,
                     pty_override: pty,
                     upstream: upstream_to_spec(&args.upstream),
                 };
@@ -588,6 +589,7 @@ async fn main() -> Result<()> {
                     ssh_user,
                     listen,
                     auto_reconnect,
+                    launch_on_startup: true,
                     pty_override: None,
                     upstream,
                 };
