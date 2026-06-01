@@ -1,8 +1,11 @@
 [package]
 name = "termhub-drivers"
+description = "Upstream connection drivers for TermHub, including serial, SSH, Telnet, TCP, local shell, and proxy modes."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 termhub-core = { workspace = true }

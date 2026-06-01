@@ -44,7 +44,9 @@ async fn password_auth_accept_or_reject() {
     let (handle, addr) = start(cfg, mgr.clone(), sshd_cancel.clone()).await.unwrap();
 
     let cc = Arc::new(client::Config::default());
-    let mut s = client::connect(cc.clone(), addr, ClientHandler).await.unwrap();
+    let mut s = client::connect(cc.clone(), addr, ClientHandler)
+        .await
+        .unwrap();
     assert!(s.authenticate_password("echo", "secret").await.unwrap());
 
     let mut s2 = client::connect(cc, addr, ClientHandler).await.unwrap();

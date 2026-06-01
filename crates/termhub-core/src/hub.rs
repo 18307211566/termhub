@@ -25,6 +25,7 @@ impl Hub {
     /// 新建 Hub。
     /// - `out_capacity`：broadcast 通道容量（消费不过来时丢老数据）
     /// - `in_capacity`：mpsc 通道容量
+    ///
     /// 返回 `(Hub, up_tx, up_rx)`：driver 拿到 `up_tx` 写上联输出，从 `up_rx` 读下联输入
     pub fn new(
         out_capacity: usize,

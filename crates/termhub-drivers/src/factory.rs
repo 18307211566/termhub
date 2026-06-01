@@ -9,7 +9,7 @@ use crate::telnet::TelnetDriver;
 
 pub fn create_driver(spec: &UpstreamSpec) -> anyhow::Result<Box<dyn UpstreamDriver>> {
     Ok(match spec {
-        UpstreamSpec::Loopback => Box::new(crate::loopback::LoopbackDriver::default()),
+        UpstreamSpec::Loopback => Box::new(crate::loopback::LoopbackDriver),
         UpstreamSpec::Serial {
             port,
             baud,
@@ -23,8 +23,8 @@ pub fn create_driver(spec: &UpstreamSpec) -> anyhow::Result<Box<dyn UpstreamDriv
             port: port.clone(),
             baud: *baud,
             params: parse_serial_params(*data_bits, parity, *stop_bits, flow)?,
-            input_eol: EolMode::from_str(input_eol),
-            output_eol: EolMode::from_str(output_eol),
+            input_eol: EolMode::parse(input_eol),
+            output_eol: EolMode::parse(output_eol),
         }),
         UpstreamSpec::Ssh {
             host,
@@ -52,7 +52,9 @@ pub fn create_driver(spec: &UpstreamSpec) -> anyhow::Result<Box<dyn UpstreamDriv
             rows: 24,
         }),
         UpstreamSpec::HttpProxy { .. } => {
-            anyhow::bail!("HttpProxy does not use UpstreamDriver; it runs as a standalone TCP proxy")
+            anyhow::bail!(
+                "HttpProxy does not use UpstreamDriver; it runs as a standalone TCP proxy"
+            )
         }
     })
 }

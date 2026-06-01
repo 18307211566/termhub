@@ -116,12 +116,9 @@ async fn proxy_udp(
 
     let mut buf = vec![0u8; 65535];
     // 等待响应，超时 30 秒
-    let n = tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        backend.recv(&mut buf),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("udp response timeout"))??;
+    let n = tokio::time::timeout(std::time::Duration::from_secs(30), backend.recv(&mut buf))
+        .await
+        .map_err(|_| anyhow::anyhow!("udp response timeout"))??;
 
     socket.send_to(&buf[..n], peer).await?;
     Ok(())

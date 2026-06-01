@@ -30,8 +30,12 @@ pub fn spawn_session_status_listener(app: AppHandle, name: String, mut rx: termh
 }
 
 #[tauri::command]
-pub async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<app_logic::SessionView>, String> {
-    app_logic::list_sessions(&state).await.map_err(|e| e.to_string())
+pub async fn list_sessions(
+    state: State<'_, AppState>,
+) -> Result<Vec<app_logic::SessionView>, String> {
+    app_logic::list_sessions(&state)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[derive(Deserialize)]
@@ -122,9 +126,7 @@ pub async fn kick_client(
 }
 
 #[tauri::command]
-pub async fn get_server_info(
-    state: State<'_, AppState>,
-) -> Result<app_logic::ServerInfo, String> {
+pub async fn get_server_info(state: State<'_, AppState>) -> Result<app_logic::ServerInfo, String> {
     app_logic::get_server_info(&state)
         .await
         .map_err(|e| e.to_string())

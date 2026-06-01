@@ -12,7 +12,10 @@ fn normalize_name(s: &str) -> Option<String> {
     if s.is_empty() {
         return None;
     }
-    if !s.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-') {
+    if !s
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+    {
         return None;
     }
     Some(s.to_ascii_lowercase())

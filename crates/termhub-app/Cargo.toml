@@ -1,8 +1,11 @@
 [package]
 name = "termhub-app"
+description = "Tauri desktop application for TermHub."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [[bin]]
 name = "termhub"

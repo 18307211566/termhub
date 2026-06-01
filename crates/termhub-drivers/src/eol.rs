@@ -12,7 +12,7 @@ pub enum EolMode {
 }
 
 impl EolMode {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s {
             "lf" | "\n" => Self::Lf,
             "crlf" | "\r\n" => Self::Crlf,

@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use bytes::Bytes;
-use termhub_core::{DriverError, DriverEvent, Hub, SessionStatus, UpstreamDriver};
 use termhub_core::runner::{spawn_runner, RunnerConfig};
+use termhub_core::{DriverError, DriverEvent, Hub, SessionStatus, UpstreamDriver};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -56,7 +56,15 @@ async fn iolost_with_reconnect_eventually_runs_again() {
         auto_reconnect: true,
         max_attempts: Some(3),
     };
-    let h = spawn_runner(Box::new(factory), hub, up_tx, up_rx, st, cancel.clone(), cfg);
+    let h = spawn_runner(
+        Box::new(factory),
+        hub,
+        up_tx,
+        up_rx,
+        st,
+        cancel.clone(),
+        cfg,
+    );
 
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
     while tokio::time::Instant::now() < deadline {
@@ -83,7 +91,15 @@ async fn fatal_does_not_retry() {
         auto_reconnect: true,
         max_attempts: None,
     };
-    let h = spawn_runner(Box::new(factory), hub, up_tx, up_rx, st, cancel.clone(), cfg);
+    let h = spawn_runner(
+        Box::new(factory),
+        hub,
+        up_tx,
+        up_rx,
+        st,
+        cancel.clone(),
+        cfg,
+    );
 
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
     let mut saw_failed = false;

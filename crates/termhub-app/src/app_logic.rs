@@ -3,8 +3,7 @@ use std::time::SystemTime;
 
 use serde::Serialize;
 use termhub_core::{
-    start_session, ClientRecordSnapshot, RunnerConfig, SessionConfig, SessionStatus,
-    UpstreamSpec,
+    start_session, ClientRecordSnapshot, RunnerConfig, SessionConfig, SessionStatus, UpstreamSpec,
 };
 use termhub_drivers::factory::create_driver;
 use termhub_drivers::http_proxy::{run_tcp_forward, run_udp_forward};
@@ -110,7 +109,11 @@ pub fn upstream_summary(s: &UpstreamSpec) -> String {
         UpstreamSpec::Telnet { host, port } => format!("{host}:{port} (telnet)"),
         UpstreamSpec::RawTcp { host, port } => format!("{host}:{port} (raw)"),
         UpstreamSpec::LocalShell { command, .. } => command.clone(),
-        UpstreamSpec::HttpProxy { listen, target, protocol } => format!("{listen} -> {target} ({protocol})"),
+        UpstreamSpec::HttpProxy {
+            listen,
+            target,
+            protocol,
+        } => format!("{listen} -> {target} ({protocol})"),
     }
 }
 
@@ -187,7 +190,12 @@ pub async fn create_session(
     let name = cfg.name.clone();
 
     // 端口转发模式：不经过 Hub，直接启动 TCP/UDP 转发
-    if let UpstreamSpec::HttpProxy { listen, target, protocol } = &cfg.upstream {
+    if let UpstreamSpec::HttpProxy {
+        listen,
+        target,
+        protocol,
+    } = &cfg.upstream
+    {
         let cancel = CancellationToken::new();
         let listen = listen.clone();
         let target = target.clone();
@@ -258,13 +266,10 @@ pub async fn create_session(
         host_keys: state.host_keys.clone(),
         max_clients_per_session: state.max_clients_per_session,
     };
-    let (sshd_handle, _sshd_addr) = termhub_sshd::start(
-        sshd_cfg,
-        session_mgr.clone(),
-        sshd_cancel.clone(),
-    )
-    .await
-    .map_err(|e| AppError::Internal(e))?;
+    let (sshd_handle, _sshd_addr) =
+        termhub_sshd::start(sshd_cfg, session_mgr.clone(), sshd_cancel.clone())
+            .await
+            .map_err(AppError::Internal)?;
 
     let status_rx = started.status_rx.clone();
     let cfg_for_runner = SessionConfig {
@@ -347,7 +352,10 @@ pub async fn delete_session(state: &AppState, name: &str) -> Result<(), AppError
     Ok(())
 }
 
-pub async fn restart_session(state: &AppState, name: &str) -> Result<termhub_core::StatusRx, AppError> {
+pub async fn restart_session(
+    state: &AppState,
+    name: &str,
+) -> Result<termhub_core::StatusRx, AppError> {
     let key = name.to_ascii_lowercase();
     let cfg = {
         let runners = state.runners.read().await;
@@ -440,4 +448,3 @@ pub fn list_serial_ports() -> Result<Vec<String>, AppError> {
         .map(|ports| ports.into_iter().map(|p| p.port_name).collect())
         .map_err(|e| AppError::Internal(e.into()))
 }
-

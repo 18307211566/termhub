@@ -3,8 +3,8 @@ use std::sync::Arc;
 use bytes::Bytes;
 use russh::server::{Auth, Handle, Handler, Msg, Session};
 use russh::{ChannelId, CryptoVec};
-use termhub_core::{ClientRecord, SessionEntry, SessionMgr};
 use std::sync::atomic::Ordering;
+use termhub_core::{ClientRecord, SessionEntry, SessionMgr};
 use tokio::task::JoinHandle;
 
 pub struct ClientHandler {
@@ -44,21 +44,21 @@ impl ClientHandler {
         let entry = match self.entry.clone() {
             Some(entry) => entry,
             None => {
-                let _ = session.close(channel);
+                session.close(channel);
                 return;
             }
         };
 
         if entry.hub.subscriber_count() >= self.max_clients {
-            let _ = session.data(
+            session.data(
                 channel,
                 CryptoVec::from_slice(b"*** termhub: session is full\r\n"),
             );
-            let _ = session.close(channel);
+            session.close(channel);
             return;
         }
 
-        let _ = session.channel_success(channel);
+        session.channel_success(channel);
         let remote = self.peer.clone();
         let rec = entry.clients.attach(remote).await;
         self.client_rec = Some(rec.clone());
@@ -165,7 +165,7 @@ impl Handler for ClientHandler {
                 Ok(Auth::Reject {
                     proceed_with_methods: None,
                 })
-            },
+            }
         }
     }
 
@@ -207,7 +207,8 @@ impl Handler for ClientHandler {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        self.start_shell_or_exec(channel, session, None, false).await;
+        self.start_shell_or_exec(channel, session, None, false)
+            .await;
         Ok(())
     }
 
@@ -229,7 +230,8 @@ impl Handler for ClientHandler {
             }
             Some(Bytes::from(v))
         };
-        self.start_shell_or_exec(channel, session, initial, true).await;
+        self.start_shell_or_exec(channel, session, initial, true)
+            .await;
         Ok(())
     }
 
@@ -242,8 +244,7 @@ impl Handler for ClientHandler {
         if let Some(entry) = self.entry.as_ref() {
             let _ = entry.hub.send_input(Bytes::copy_from_slice(data)).await;
             if let Some(rec) = self.client_rec.as_ref() {
-                rec.bytes_in
-                    .fetch_add(data.len() as u64, Ordering::Relaxed);
+                rec.bytes_in.fetch_add(data.len() as u64, Ordering::Relaxed);
             }
         }
         Ok(())

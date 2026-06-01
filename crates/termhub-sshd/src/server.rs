@@ -48,30 +48,26 @@ pub async fn start(
     let russh_cfg = RConfig {
         keys: cfg.host_keys,
         preferred: russh::Preferred {
-            kex: Cow::Borrowed(
-                &[
-                    russh::kex::CURVE25519,
-                    russh::kex::CURVE25519_PRE_RFC_8731,
-                    russh::kex::ECDH_SHA2_NISTP256,
-                    russh::kex::DH_G16_SHA512,
-                    russh::kex::DH_G14_SHA256,
-                    russh::kex::DH_G14_SHA1,
-                    russh::kex::EXTENSION_SUPPORT_AS_CLIENT,
-                    russh::kex::EXTENSION_SUPPORT_AS_SERVER,
-                    russh::kex::EXTENSION_OPENSSH_STRICT_KEX_AS_CLIENT,
-                    russh::kex::EXTENSION_OPENSSH_STRICT_KEX_AS_SERVER,
-                ]
-            ),
-            key: Cow::Borrowed(
-                &[
-                    russh_keys::key::ED25519,
-                    russh_keys::key::ECDSA_SHA2_NISTP256,
-                    russh_keys::key::ECDSA_SHA2_NISTP521,
-                    russh_keys::key::RSA_SHA2_512,
-                    russh_keys::key::RSA_SHA2_256,
-                    russh_keys::key::SSH_RSA,
-                ]
-            ),
+            kex: Cow::Borrowed(&[
+                russh::kex::CURVE25519,
+                russh::kex::CURVE25519_PRE_RFC_8731,
+                russh::kex::ECDH_SHA2_NISTP256,
+                russh::kex::DH_G16_SHA512,
+                russh::kex::DH_G14_SHA256,
+                russh::kex::DH_G14_SHA1,
+                russh::kex::EXTENSION_SUPPORT_AS_CLIENT,
+                russh::kex::EXTENSION_SUPPORT_AS_SERVER,
+                russh::kex::EXTENSION_OPENSSH_STRICT_KEX_AS_CLIENT,
+                russh::kex::EXTENSION_OPENSSH_STRICT_KEX_AS_SERVER,
+            ]),
+            key: Cow::Borrowed(&[
+                russh_keys::key::ED25519,
+                russh_keys::key::ECDSA_SHA2_NISTP256,
+                russh_keys::key::ECDSA_SHA2_NISTP521,
+                russh_keys::key::RSA_SHA2_512,
+                russh_keys::key::RSA_SHA2_256,
+                russh_keys::key::SSH_RSA,
+            ]),
             cipher: default.preferred.cipher.clone(),
             mac: default.preferred.mac.clone(),
             compression: default.preferred.compression.clone(),

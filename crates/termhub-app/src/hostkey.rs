@@ -14,8 +14,8 @@ pub fn load_or_create(path: &Path) -> anyhow::Result<Vec<KeyPair>> {
         let pem = fs::read_to_string(&ed25519_path)?;
         russh_keys::decode_secret_key(&pem, None)?
     } else {
-        let kp = KeyPair::generate_ed25519()
-            .ok_or_else(|| anyhow::anyhow!("gen ed25519 failed"))?;
+        let kp =
+            KeyPair::generate_ed25519().ok_or_else(|| anyhow::anyhow!("gen ed25519 failed"))?;
         let mut buf = Vec::new();
         russh_keys::encode_pkcs8_pem(&kp, &mut buf)?;
         if let Some(parent) = ed25519_path.parent() {

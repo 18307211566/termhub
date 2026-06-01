@@ -12,7 +12,7 @@ async fn loopback_echoes_input_back() {
 
     let cancel2 = cancel.clone();
     let h = tokio::spawn(async move {
-        let mut d = LoopbackDriver::default();
+        let mut d = LoopbackDriver;
         d.run(in_rx, evt_tx, cancel2).await
     });
 

@@ -31,5 +31,6 @@ config.local.toml
 host_key
 logs/
 .claude/
+.agents/
 .vscode/
 tmp/

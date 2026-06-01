@@ -54,7 +54,10 @@ fn map_err(e: AppError) -> (StatusCode, Json<ApiResponse<()>>) {
 async fn list_sessions(
     AxumState(state): AxumState<AppState>,
 ) -> Result<Json<ApiResponse<Vec<app_logic::SessionView>>>, (StatusCode, Json<ApiResponse<()>>)> {
-    app_logic::list_sessions(&state).await.map(ok).map_err(map_err)
+    app_logic::list_sessions(&state)
+        .await
+        .map(ok)
+        .map_err(map_err)
 }
 
 async fn create_session(
@@ -140,7 +143,8 @@ async fn get_server_info(
         .map_err(map_err)
 }
 
-async fn list_serial_ports() -> Result<Json<ApiResponse<Vec<String>>>, (StatusCode, Json<ApiResponse<()>>)> {
+async fn list_serial_ports(
+) -> Result<Json<ApiResponse<Vec<String>>>, (StatusCode, Json<ApiResponse<()>>)> {
     app_logic::list_serial_ports().map(ok).map_err(map_err)
 }
 
@@ -158,10 +162,7 @@ pub fn api_router(state: AppState) -> Router {
         .route("/api/sessions/:name/stop", post(stop_session))
         .route("/api/sessions/:name/restart", post(restart_session))
         .route("/api/sessions/:name/clients", get(list_clients))
-        .route(
-            "/api/sessions/:name/clients/:id/kick",
-            post(kick_client),
-        )
+        .route("/api/sessions/:name/clients/:id/kick", post(kick_client))
         .route("/api/server", get(get_server_info))
         .route("/api/serial-ports", get(list_serial_ports))
         .with_state(state)

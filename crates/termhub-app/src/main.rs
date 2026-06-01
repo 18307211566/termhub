@@ -1,4 +1,7 @@
-#![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
 
 mod api_server;
 mod app_logic;
@@ -13,14 +16,13 @@ use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 use commands::{
-    create_session, delete_session, exit_app, get_server_info, kick_client, list_clients, list_serial_ports,
-    list_sessions, restart_session, spawn_session_status_listener, stop_session, update_session,
+    create_session, delete_session, exit_app, get_server_info, kick_client, list_clients,
+    list_serial_ports, list_sessions, restart_session, spawn_session_status_listener, stop_session,
+    update_session,
 };
 use commands_settings::{get_autostart, set_autostart};
 use state::{AppState, RunnerEntry};
-use termhub_core::{
-    start_session, RunnerConfig, SessionConfig, SessionMgr, UpstreamSpec,
-};
+use termhub_core::{start_session, RunnerConfig, SessionConfig, SessionMgr, UpstreamSpec};
 use termhub_drivers::factory::create_driver;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
@@ -73,7 +75,12 @@ async fn main() -> anyhow::Result<()> {
             );
             continue;
         }
-        if let UpstreamSpec::HttpProxy { ref listen, ref target, ref protocol } = s.upstream {
+        if let UpstreamSpec::HttpProxy {
+            ref listen,
+            ref target,
+            ref protocol,
+        } = s.upstream
+        {
             let cancel = tokio_util::sync::CancellationToken::new();
             let listen = listen.clone();
             let target = target.clone();
@@ -126,12 +133,8 @@ async fn main() -> anyhow::Result<()> {
                 host_keys: host_keys.clone(),
                 max_clients_per_session: stored.server.max_clients_per_session,
             };
-            let (sshd_handle, _sshd_addr) = termhub_sshd::start(
-                sshd_cfg,
-                session_mgr.clone(),
-                sshd_cancel.clone(),
-            )
-            .await?;
+            let (sshd_handle, _sshd_addr) =
+                termhub_sshd::start(sshd_cfg, session_mgr.clone(), sshd_cancel.clone()).await?;
 
             runners_map.insert(
                 s.name.to_ascii_lowercase(),
@@ -195,12 +198,8 @@ async fn main() -> anyhow::Result<()> {
             host_keys: host_keys.clone(),
             max_clients_per_session: stored.server.max_clients_per_session,
         };
-        let (sshd_handle, _sshd_addr) = termhub_sshd::start(
-            sshd_cfg,
-            session_mgr.clone(),
-            sshd_cancel.clone(),
-        )
-        .await?;
+        let (sshd_handle, _sshd_addr) =
+            termhub_sshd::start(sshd_cfg, session_mgr.clone(), sshd_cancel.clone()).await?;
 
         runners_map.insert(
             cfg.name.to_ascii_lowercase(),

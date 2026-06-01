@@ -70,14 +70,23 @@ port = 9000
     let cfg: Config = toml::from_str(toml).unwrap();
     assert_eq!(cfg.server.listen, "0.0.0.0:2222");
     assert_eq!(cfg.sessions.len(), 5);
-    assert!(matches!(cfg.sessions[0].upstream, UpstreamSpec::Serial { .. }));
+    assert!(matches!(
+        cfg.sessions[0].upstream,
+        UpstreamSpec::Serial { .. }
+    ));
     assert!(matches!(cfg.sessions[1].upstream, UpstreamSpec::Ssh { .. }));
     assert!(matches!(
         cfg.sessions[2].upstream,
         UpstreamSpec::LocalShell { .. }
     ));
-    assert!(matches!(cfg.sessions[3].upstream, UpstreamSpec::Telnet { .. }));
-    assert!(matches!(cfg.sessions[4].upstream, UpstreamSpec::RawTcp { .. }));
+    assert!(matches!(
+        cfg.sessions[3].upstream,
+        UpstreamSpec::Telnet { .. }
+    ));
+    assert!(matches!(
+        cfg.sessions[4].upstream,
+        UpstreamSpec::RawTcp { .. }
+    ));
 }
 
 #[test]

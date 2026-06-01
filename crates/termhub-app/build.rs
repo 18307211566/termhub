@@ -34,8 +34,8 @@ fn main() {
     let path_for_rc = strip_verbatim_windows_prefix(icon_abs.display().to_string());
     let escaped = escape_rc_string(&path_for_rc);
 
-    let windows = tauri_build::WindowsAttributes::new()
-        .append_rc_content(format!("1 ICON \"{escaped}\"\n"));
+    let windows =
+        tauri_build::WindowsAttributes::new().append_rc_content(format!("1 ICON \"{escaped}\"\n"));
 
     tauri_build::try_build(tauri_build::Attributes::new().windows_attributes(windows))
         .expect("failed to run tauri-build");

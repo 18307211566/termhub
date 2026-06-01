@@ -60,7 +60,7 @@ async fn five_clients_one_gb() {
 
     let driver_cancel = cancel.clone();
     tokio::spawn(async move {
-        let mut driver = LoopbackDriver::default();
+        let mut driver = LoopbackDriver;
         let _ = driver.run(up_rx, evt_tx, driver_cancel).await;
     });
     let _ = status_tx.send(termhub_core::SessionStatus::Running { uptime_secs: 0 });

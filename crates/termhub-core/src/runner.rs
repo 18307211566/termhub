@@ -29,16 +29,7 @@ pub fn spawn_runner(
 ) -> JoinHandle<()> {
     let up_rx_shared = Arc::new(tokio::sync::Mutex::new(up_rx));
     tokio::spawn(async move {
-        run_loop(
-            factory,
-            hub,
-            up_tx,
-            up_rx_shared,
-            status,
-            cancel,
-            cfg,
-        )
-        .await;
+        run_loop(factory, hub, up_tx, up_rx_shared, status, cancel, cfg).await;
     })
 }
 
@@ -135,9 +126,7 @@ async fn run_loop(
 
         let cancel_drv = cancel.clone();
         let mut drv = factory();
-        let drv_join = tokio::spawn(async move {
-            drv.run(drv_in_rx, evt_tx, cancel_drv).await
-        });
+        let drv_join = tokio::spawn(async move { drv.run(drv_in_rx, evt_tx, cancel_drv).await });
 
         let _ = status.send(SessionStatus::Running {
             uptime_secs: start_time.elapsed().as_secs(),

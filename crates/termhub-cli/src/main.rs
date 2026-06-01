@@ -10,7 +10,10 @@ use termhub_core::{SessionConfig, UpstreamSpec};
 // ---------------------------------------------------------------------------
 
 #[derive(Parser)]
-#[command(name = "termhub-cli", about = "TermHub CLI - manage sessions programmatically")]
+#[command(
+    name = "termhub-cli",
+    about = "TermHub CLI - manage sessions programmatically"
+)]
 struct Cli {
     /// HTTP API base URL
     #[arg(long, env("TERMHUB_API_URL"), default_value = "http://127.0.0.1:2223")]
@@ -29,7 +32,7 @@ enum Command {
     /// Session management
     Session {
         #[command(subcommand)]
-        action: SessionAction,
+        action: Box<SessionAction>,
     },
     /// Server management
     Server {
@@ -381,7 +384,11 @@ fn upstream_to_spec(cmd: &UpstreamCmd) -> UpstreamSpec {
             command: command.clone(),
             args: args.clone(),
         },
-        UpstreamCmd::HttpProxy { listen, target, protocol } => UpstreamSpec::HttpProxy {
+        UpstreamCmd::HttpProxy {
+            listen,
+            target,
+            protocol,
+        } => UpstreamSpec::HttpProxy {
             listen: listen.clone(),
             target: target.clone(),
             protocol: protocol.clone(),
@@ -430,17 +437,24 @@ async fn api_post<T: serde::de::DeserializeOwned>(
     }
 }
 
-
 // Unit calls that don't require a data field in the response.
 async fn api_post_unit(base: &str, path: &str, body: impl Serialize) -> Result<()> {
     let client = reqwest::Client::new();
-    let resp = client.post(format!("{base}{path}")).json(&body).send().await?;
+    let resp = client
+        .post(format!("{base}{path}"))
+        .json(&body)
+        .send()
+        .await?;
     check_unit_response(resp).await
 }
 
 async fn api_put_unit(base: &str, path: &str, body: impl Serialize) -> Result<()> {
     let client = reqwest::Client::new();
-    let resp = client.put(format!("{base}{path}")).json(&body).send().await?;
+    let resp = client
+        .put(format!("{base}{path}"))
+        .json(&body)
+        .send()
+        .await?;
     check_unit_response(resp).await
 }
 
@@ -490,7 +504,7 @@ async fn main() -> Result<()> {
     let as_json = cli.json;
 
     match cli.command {
-        Command::Session { action } => match action {
+        Command::Session { action } => match *action {
             SessionAction::List => {
                 let sessions: Vec<SessionView> = api_get(&base, "/api/sessions").await?;
                 if as_json {
@@ -570,9 +584,7 @@ async fn main() -> Result<()> {
                     .find(|s| s.name.eq_ignore_ascii_case(&args.name))
                     .ok_or_else(|| anyhow::anyhow!("session '{}' not found", args.name))?;
 
-                let password = args
-                    .password
-                    .unwrap_or_else(|| current.name.clone()); // placeholder, real password not exposed
+                let password = args.password.unwrap_or_else(|| current.name.clone()); // placeholder, real password not exposed
                 let auto_reconnect = args.auto_reconnect.unwrap_or(current.auto_reconnect);
                 let upstream = args
                     .upstream
@@ -647,12 +659,10 @@ async fn main() -> Result<()> {
                 if as_json {
                     println!("{}", serde_json::to_string_pretty(&info)?);
                 } else {
-                    let rows = vec![
-                        ServerRow {
-                            key: "Host Key Fingerprint".into(),
-                            value: info.host_key_fpr,
-                        },
-                    ];
+                    let rows = vec![ServerRow {
+                        key: "Host Key Fingerprint".into(),
+                        value: info.host_key_fpr,
+                    }];
                     println!("{}", Table::new(&rows));
                 }
             }

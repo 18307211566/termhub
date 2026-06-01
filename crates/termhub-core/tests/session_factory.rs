@@ -43,10 +43,7 @@ async fn start_session_registers_and_reaches_running() {
         }
         let _ = status_rx.changed().await;
     }
-    assert!(matches!(
-        *status_rx.borrow(),
-        SessionStatus::Running { .. }
-    ));
+    assert!(matches!(*status_rx.borrow(), SessionStatus::Running { .. }));
     assert!(mgr.get("admin").await.is_some());
 
     started.cancel.cancel();

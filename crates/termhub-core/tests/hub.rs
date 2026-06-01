@@ -1,6 +1,6 @@
 use bytes::Bytes;
-use tokio::sync::broadcast::error::TryRecvError;
 use termhub_core::Hub;
+use tokio::sync::broadcast::error::TryRecvError;
 
 #[tokio::test]
 async fn output_fanout_two_subscribers_each_receive_same_bytes() {

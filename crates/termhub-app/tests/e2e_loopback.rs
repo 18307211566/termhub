@@ -48,7 +48,7 @@ async fn e2e_loopback_echo() {
 
     let driver_cancel = cancel.clone();
     tokio::spawn(async move {
-        let mut driver = LoopbackDriver::default();
+        let mut driver = LoopbackDriver;
         let _ = driver.run(up_rx, evt_tx, driver_cancel).await;
     });
     let _ = status_tx.send(termhub_core::SessionStatus::Running { uptime_secs: 0 });
@@ -80,14 +80,15 @@ async fn e2e_loopback_echo() {
     let mut got = Vec::new();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
     while got.len() < 2 && tokio::time::Instant::now() < deadline {
-        if let Some(msg) = channel.wait().await {
-            if let russh::ChannelMsg::Data { ref data } = msg {
-                got.extend_from_slice(data);
-            }
+        if let Some(russh::ChannelMsg::Data { ref data }) = channel.wait().await {
+            got.extend_from_slice(data);
         }
     }
 
-    assert!(got.windows(2).any(|window| window == b"hi"), "got = {got:?}");
+    assert!(
+        got.windows(2).any(|window| window == b"hi"),
+        "got = {got:?}"
+    );
 
     cancel.cancel();
     sshd_cancel.cancel();
