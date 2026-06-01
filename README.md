@@ -1,6 +1,6 @@
 # TermHub
 
-[![CI](https://github.com/18307211566/termhub/actions/workflows/ci.yml/badge.svg)](https://github.com/18307211566/termhub/actions/workflows/ci.yml)
+[![CI](https://github.com/huoat521/termhub/actions/workflows/ci.yml/badge.svg)](https://github.com/huoat521/termhub/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license--许可证)
 
 [English](#english) | [中文](#中文)
